@@ -1,0 +1,13 @@
+node_modules/
+.next/
+dist/
+out/
+.env
+.DS_Store
+.idea/
+*.log
+package-lock.json
+yarn.lock
+npm-debug.log
+/.turbo
+/.vercel
