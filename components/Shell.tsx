@@ -1,16 +1,18 @@
-"use client";
-import React from 'react';
+'use client';
+import React, { useState } from 'react';
 import Sidebar from './Sidebar';
+import TopBar from './TopBar';
 
 export default function Shell({ children }: { children: React.ReactNode }) {
+  const [search, setSearch] = useState('');
+
   return (
-    <div className="min-h-screen flex">
-      <aside className="w-72 h-screen sticky top-0 bg-premium text-white">
-        <Sidebar />
-      </aside>
-      <main className="flex-1 bg-canvas p-6">
+    <>
+      <Sidebar />
+      <main className="ml-64 flex flex-col h-screen bg-[#f6f8fc]">
+        <TopBar search={search} onSearch={setSearch} />
         {children}
       </main>
-    </div>
+    </>
   );
 }
