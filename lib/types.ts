@@ -69,6 +69,90 @@ export interface RefreshTokenResponse {
   expiresIn: number;
 }
 
+// ── Multi-tenant registration / seat provisioning ───────────────────
+/**
+ * Billing tiers mirror the `tenants.billing_tier` CHECK constraint in
+ * packages/db/src/migrations/001_initial_schema.sql.
+ */
+export type BillingTier = 'starter' | 'premium' | 'business' | 'business_premium';
+
+/**
+ * Frontend seat-limit gate. Authoritative enforcement lives on the backend;
+ * these values only drive the client-side tier-gate UX (disable/upgrade hints).
+ * Starter = 2 seats per the product spec.
+ */
+export const TIER_SEAT_LIMITS: Record<BillingTier, number> = {
+  starter: 2,
+  premium: 5,
+  business: 15,
+  business_premium: Number.POSITIVE_INFINITY,
+};
+
+export const TIER_LABELS: Record<BillingTier, string> = {
+  starter: 'Starter',
+  premium: 'Premium',
+  business: 'Business',
+  business_premium: 'Business Premium',
+};
+
+/** Step 1 (account) + Step 2 (store) fields collapsed into one payload. */
+export interface RegisterRequest {
+  owner_email: string;
+  password: string;
+  owner_phone_number: string;
+  organization_name: string;
+  /** ISO-4217 baseline market currency, e.g. 'RWF'. */
+  currency: string;
+  /** Idempotency / LWW anchor for the create — timestamptz (ISO-8601). */
+  client_created_at: string;
+}
+
+export interface RegisterResponse {
+  /**
+   * The tenant/organization id. This is the global data-isolation boundary
+   * injected into every offline-first WatermelonDB record (organization_id).
+   */
+  organization_id: string;
+  organization_name: string;
+  billing_tier: BillingTier;
+  currency: string;
+  /** Present when the backend issues a session on registration (auto-login). */
+  owner?: AuthUser;
+  accessToken?: string;
+  refreshToken?: string;
+}
+
+/** A provisioned team member (row in `users`, scoped to the tenant). */
+export interface Seat {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  /** Immutable theft-prevention tag stamped onto every sale the worker rings up. */
+  worker_tag: string;
+  is_active: boolean;
+  created_at: string; // timestamptz
+  updated_at: string; // timestamptz — LWW comparison key
+}
+
+export interface SeatListResponse {
+  seats: Seat[];
+  tier: BillingTier;
+  /** Server-reported ceiling; falls back to TIER_SEAT_LIMITS[tier] on the client. */
+  max_seats: number;
+  used_seats: number;
+}
+
+export interface CreateSeatRequest {
+  email: string;
+  password: string;
+  full_name: string;
+  role: UserRole;
+  worker_tag: string;
+  /** timestamptz (ISO-8601) for Last-Write-Wins sync comparisons. */
+  client_created_at: string;
+}
+
 // ── Error envelope (every service) ──────────────────────────────────
 export type ErrorCode =
   | 'INVALID_REQUEST' | 'UNAUTHORIZED' | 'FORBIDDEN'

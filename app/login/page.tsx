@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
 import { tokenStore } from '../../lib/token-store';
@@ -103,7 +104,13 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="text-[11px] text-zinc-600 text-center mt-6">
+        <p className="text-[12px] text-zinc-600 text-center mt-6">
+          New to Nerva?{' '}
+          <Link href="/auth/register" className="text-pulse hover:text-pulse-hover font-medium">
+            Create a workspace
+          </Link>
+        </p>
+        <p className="text-[11px] text-zinc-600 text-center mt-2">
           Your tenant admin can provide your Tenant ID.
         </p>
       </div>

@@ -9,6 +9,11 @@ import type {
   SyncPayload,
   SyncResponse,
   SyncPullResponse,
+  RegisterRequest,
+  RegisterResponse,
+  CreateSeatRequest,
+  Seat,
+  SeatListResponse,
 } from './types';
 
 /**
@@ -34,6 +39,20 @@ export const auth = {
       skipRefresh: true,
       headers: { 'X-Tenant-Id': tenantId },
       body: { email, password },
+    });
+  },
+
+  /**
+   * Register a new tenant/organization and its owner account.
+   * No auth; the gateway forwards to auth-tenant. The `X-Client-Mutation-Id`
+   * header is attached automatically by request() for idempotent retries.
+   */
+  register(input: RegisterRequest): Promise<RegisterResponse> {
+    return request<RegisterResponse>('/api/v1/auth/register', {
+      method: 'POST',
+      auth: false,
+      skipRefresh: true,
+      body: input,
     });
   },
 
@@ -117,5 +136,21 @@ export const sync = {
 
   getStatus(jobId: string): Promise<SyncResponse> {
     return request<SyncResponse>(`/api/v1/sync/status/${encodeURIComponent(jobId)}`);
+  },
+};
+
+// ── seat provisioning (auth-tenant · owner-only) ────────────────────
+export const seats = {
+  /** List the tenant's provisioned seats plus the tier/limit envelope. */
+  list(): Promise<SeatListResponse> {
+    return request<SeatListResponse>('/api/v1/auth/seats');
+  },
+
+  /** Provision a new worker seat. Body carries the LWW client_created_at. */
+  create(input: CreateSeatRequest): Promise<Seat> {
+    return request<Seat>('/api/v1/auth/seats', {
+      method: 'POST',
+      body: input,
+    });
   },
 };

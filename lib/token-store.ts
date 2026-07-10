@@ -10,6 +10,7 @@ const ACCESS_KEY = 'nerva.accessToken';
 const REFRESH_KEY = 'nerva.refreshToken';
 const USER_KEY = 'nerva.user';
 const TENANT_KEY = 'nerva.tenantId';
+const ORG_KEY = 'nerva.organizationId';
 
 const isBrowser = typeof window !== 'undefined';
 
@@ -35,6 +36,21 @@ export const tokenStore = {
     if (id) localStorage.setItem(TENANT_KEY, id);
     else localStorage.removeItem(TENANT_KEY);
   },
+  /**
+   * The organization id is the global data-isolation boundary for the
+   * offline-first WatermelonDB client — every local record is scoped by it
+   * (see app/database/schema.ts, the indexed `organization_id` column).
+   * Stored separately from tenantId so it survives logout and keeps local
+   * data correctly partitioned across account switches.
+   */
+  get organizationId(): string | null {
+    return isBrowser ? localStorage.getItem(ORG_KEY) : null;
+  },
+  set organizationId(id: string | null) {
+    if (!isBrowser) return;
+    if (id) localStorage.setItem(ORG_KEY, id);
+    else localStorage.removeItem(ORG_KEY);
+  },
   getUser(): AuthUser | null {
     if (!isBrowser) return null;
     const raw = localStorage.getItem(USER_KEY);
@@ -51,6 +67,8 @@ export const tokenStore = {
     localStorage.setItem(REFRESH_KEY, session.refreshToken);
     localStorage.setItem(USER_KEY, JSON.stringify(session.user));
     localStorage.setItem(TENANT_KEY, session.user.tenantId);
+    // Keep the WatermelonDB isolation boundary aligned with the tenant.
+    localStorage.setItem(ORG_KEY, session.user.tenantId);
   },
   setAccessToken(token: string): void {
     if (!isBrowser) return;
