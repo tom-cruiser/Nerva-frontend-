@@ -1,4 +1,5 @@
 'use client';
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Field, Select, Modal, Badge, Avatar } from '../../../../components/ui';
 import { useAuth } from '../../../context/AuthContext';
@@ -103,12 +104,12 @@ export default function SeatsPage() {
   };
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-7 max-w-6xl mx-auto px-1">
       {/* Heading */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">Team seats</h1>
-          <p className="text-[13px] text-zinc-500 mt-1">
+          <h1 className="text-2xl font-extrabold text-white tracking-tight font-sans">Team Seats</h1>
+          <p className="text-xs sm:text-[13px] text-slate-400 mt-1 max-w-xl leading-relaxed">
             Provision the workers who operate your registers. Every seat carries an audit tag
             stamped onto its offline sales.
           </p>
@@ -130,29 +131,46 @@ export default function SeatsPage() {
       <SeatVisualizer tier={tier} used={activeSeats} max={maxSeats} maxLabel={maxLabel} pct={pct} atLimit={atLimit} />
 
       {/* Seat list */}
-      <div className="glass rounded-xl2 overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-zinc-700/60 flex items-center justify-between">
-          <h2 className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-400">
+      <div className="
+        bg-white/[0.02] backdrop-blur-md 
+        border border-white/10 
+        rounded-2xl overflow-hidden
+        shadow-[0_12px_40px_-12px_rgba(0,0,0,0.5)]
+      ">
+        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+          <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.15em] text-slate-400">
             Provisioned seats
           </h2>
-          <span className="text-[11px] font-mono text-zinc-500">{seats.length} total</span>
+          <span className="text-[10px] font-mono font-bold bg-white/5 border border-white/10 px-2 py-0.5 rounded-md text-slate-300">
+            {seats.length} total
+          </span>
         </div>
 
         {loading ? (
-          <div className="py-14 flex items-center justify-center">
-            <span className="w-5 h-5 border-2 border-pulse border-t-transparent rounded-full animate-spin" />
+          <div className="py-16 flex items-center justify-center">
+            <span className="w-6 h-6 border-2 border-[#0052ff] border-t-transparent rounded-full animate-spin" />
           </div>
         ) : loadError ? (
-          <div className="px-5 py-10 text-center">
-            <p className="text-[13px] text-red-400">{loadError}</p>
-            <button onClick={load} className="mt-3 text-[12px] text-pulse hover:text-pulse-hover font-medium">
-              Retry
+          <div className="px-6 py-12 text-center max-w-md mx-auto">
+            <div className="w-10 h-10 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mx-auto mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>
+              </svg>
+            </div>
+            <p className="text-xs sm:text-[13px] text-red-400 leading-relaxed">{loadError}</p>
+            <button 
+              onClick={load} 
+              className="mt-4 px-4 py-1.5 rounded-xl text-xs bg-white/5 hover:bg-white/10 border border-white/10 text-[#0052ff] font-bold transition-all"
+            >
+              Retry Connection
             </button>
           </div>
         ) : seats.length === 0 ? (
-          <div className="px-5 py-12 text-center text-[13px] text-zinc-500">No seats provisioned yet.</div>
+          <div className="px-6 py-16 text-center text-xs sm:text-[13px] text-slate-500 font-medium">
+            No seats provisioned yet. Get started by adding a worker seat above.
+          </div>
         ) : (
-          <ul className="divide-y divide-zinc-800/70">
+          <ul className="divide-y divide-white/5">
             {seats.map((s) => (
               <SeatRow key={s.id} seat={s} isOwner={s.id === user?.id} />
             ))}
@@ -187,41 +205,55 @@ function SeatVisualizer({
   atLimit: boolean;
 }) {
   const remaining = Number.isFinite(max) ? Math.max(0, max - used) : Infinity;
-  const barColor = atLimit ? 'bg-red-500' : pct >= 75 ? 'bg-amber-400' : 'bg-pulse';
+  const barColor = atLimit ? 'bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]' : pct >= 75 ? 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.4)]' : 'bg-[#0052ff] shadow-[0_0_12px_rgba(0,82,255,0.4)]';
 
   return (
-    <div className="glass rounded-xl2 p-5">
+    <div className="
+      bg-white/[0.02] backdrop-blur-md 
+      border border-white/10 
+      rounded-2xl p-6
+      shadow-[0_12px_40px_-12px_rgba(0,0,0,0.4)]
+    ">
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2.5">
-            <span className="text-[12px] font-semibold text-zinc-400 uppercase tracking-wider">
+            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
               Seats in use
             </span>
             <Badge color={atLimit ? 'red' : 'teal'}>{TIER_LABELS[tier]} plan</Badge>
           </div>
           <div className="flex items-end gap-2 mt-2">
-            <span className="text-[34px] leading-none font-black text-white tracking-tight">{used}</span>
-            <span className="text-[15px] font-semibold text-zinc-500 mb-0.5">/ {maxLabel} seats total</span>
+            <span className="text-4xl font-extrabold text-white tracking-tight leading-none">{used}</span>
+            <span className="text-sm font-bold text-slate-500 mb-0.5">/ {maxLabel} seats total</span>
           </div>
         </div>
-        <span className="w-10 h-10 rounded-lg bg-pulse/10 border border-pulse/20 flex items-center justify-center text-pulse">
-          <span className="material-symbols-outlined">groups</span>
-        </span>
+        <div className="
+          w-10 h-10 rounded-xl 
+          bg-[#0052ff]/10 border border-[#0052ff]/20 
+          flex items-center justify-center text-[#0052ff]
+          shadow-[0_4px_12px_rgba(0,82,255,0.15)]
+        ">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
       </div>
 
-      <div className="mt-4 h-2 rounded-full bg-zinc-800 overflow-hidden">
+      <div className="mt-5 h-2 rounded-full bg-white/5 overflow-hidden border border-white/5">
         <div className={`h-full ${barColor} rounded-full transition-all duration-500`} style={{ width: `${pct}%` }} />
       </div>
 
-      <p className="text-[12px] text-zinc-500 mt-2.5">
+      <p className="text-xs text-slate-400 mt-3.5">
         {atLimit ? (
-          <span className="text-red-400">
+          <span className="text-red-400 font-medium">
             Limit reached — upgrade your plan to provision more seats.
           </span>
         ) : Number.isFinite(remaining) ? (
           <>
-            <span className="text-zinc-300 font-medium">{remaining}</span> seat{remaining === 1 ? '' : 's'} remaining
-            on your plan.
+            <span className="text-white font-bold font-mono bg-white/5 border border-white/10 px-1.5 py-0.5 rounded mr-1">{remaining}</span> seat{remaining === 1 ? '' : 's'} remaining on your plan.
           </>
         ) : (
           'Unlimited seats on this plan.'
@@ -234,27 +266,33 @@ function SeatVisualizer({
 // ── Seat row ────────────────────────────────────────────────────────
 function SeatRow({ seat, isOwner }: { seat: Seat; isOwner: boolean }) {
   return (
-    <li className="px-5 py-3.5 flex items-center gap-4 hover:bg-white/[0.02] transition-colors">
+    <li className="px-6 py-4 flex items-center gap-4 hover:bg-white/[0.01] transition-colors duration-150">
       <Avatar name={seat.full_name || seat.email} size={36} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-[14px] font-semibold text-zinc-100 truncate">
+          <span className="text-[14px] font-bold text-white tracking-tight truncate">
             {seat.full_name || seat.email}
           </span>
           {isOwner && <Badge color="teal">Owner</Badge>}
           {!seat.is_active && <Badge color="zinc">Inactive</Badge>}
         </div>
-        <span className="text-[12px] text-zinc-500 truncate block">{seat.email}</span>
+        <span className="text-xs text-slate-500 truncate block mt-0.5">{seat.email}</span>
       </div>
 
-      <div className="hidden sm:flex flex-col items-end gap-1">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{seat.role}</span>
-        <span className="text-[11px] font-mono text-zinc-500">Added {formatDate(seat.created_at)}</span>
+      <div className="hidden sm:flex flex-col items-end gap-1.5">
+        <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-slate-400 bg-white/5 border border-white/5 px-2 py-0.5 rounded-md">
+          {seat.role}
+        </span>
+        <span className="text-[10px] font-mono text-slate-500">Added {formatDate(seat.created_at)}</span>
       </div>
 
       {/* Audit tag — tied to the register checkout context for every sale. */}
       <span
-        className="font-mono text-[11px] px-2.5 py-1 rounded-md bg-pulse/10 border border-pulse/20 text-pulse shrink-0"
+        className="
+          font-mono text-[10px] font-bold px-3 py-1.5 rounded-xl
+          bg-[#0052ff]/10 border border-[#0052ff]/20 text-[#0052ff] shrink-0
+          shadow-[0_2px_8px_-2px_rgba(0,82,255,0.12)]
+        "
         title="Audit tag — every offline sale this worker rings up is stamped with this tag."
       >
         {seat.worker_tag}
@@ -278,14 +316,27 @@ function AddWorkerButton({
       <button
         onClick={onClick}
         disabled={disabled}
-        className="bg-pulse text-[#0C0C0E] font-semibold rounded-lg px-4 py-2.5 text-[14px] hover:bg-pulse-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+        className="
+          bg-[#0052ff] text-white font-bold rounded-2xl px-5 py-2.5 text-xs uppercase tracking-wider
+          hover:bg-[#0042d9] transition-all duration-200 active:scale-[0.98]
+          disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100
+          flex items-center gap-2 shadow-[0_8px_24px_-6px_rgba(0,82,255,0.35)]
+        "
       >
-        <span className="material-symbols-outlined text-lg">person_add</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <line x1="19" x2="19" y1="8" y2="14"/>
+          <line x1="22" x2="16" y1="11" y2="11"/>
+        </svg>
         Add worker
       </button>
       {disabled && reason && (
-        <div className="absolute right-0 top-full mt-2 w-64 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-30">
-          <div className="glass rounded-lg px-3 py-2 text-[12px] text-zinc-300 shadow-glow">
+        <div className="absolute right-0 top-full mt-2 w-72 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-30 transform translate-y-1 group-hover:translate-y-0">
+          <div className="
+            bg-[#10151d]/90 backdrop-blur-md border border-white/10 rounded-2xl p-4 text-xs text-slate-300
+            shadow-[0_12px_32px_rgba(0,0,0,0.5)] leading-relaxed
+          ">
             {reason}
           </div>
         </div>
@@ -398,14 +449,19 @@ function AddWorkerModal({
         <>
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-[13px] font-semibold text-zinc-300 border border-white/8 hover:bg-white/6 transition-colors"
+            className="px-4 py-2.5 rounded-xl text-xs font-mono font-bold uppercase tracking-wider text-slate-400 border border-white/10 hover:bg-white/5 transition-all"
           >
             Cancel
           </button>
           <button
             onClick={handleCreate}
             disabled={!valid || submitting}
-            className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-pulse text-[#0C0C0E] hover:bg-pulse-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="
+              px-5 py-2.5 rounded-xl text-xs font-mono font-bold uppercase tracking-wider 
+              bg-[#0052ff] text-white hover:bg-[#0042d9] transition-all 
+              disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2
+              shadow-[0_6px_20px_-4px_rgba(0,82,255,0.3)]
+            "
           >
             {submitting && (
               <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
@@ -415,42 +471,49 @@ function AddWorkerModal({
         </>
       }
     >
-      <Field label="Full name" value={fullName} onChange={setFullName} placeholder="Amara Uwase" autoComplete="off" />
-      <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="amara@store.com" autoComplete="off" />
-      <Field
-        label="Temporary password"
-        type="password"
-        value={password}
-        onChange={setPassword}
-        placeholder="••••••••"
-        autoComplete="new-password"
-        hint="Minimum 8 characters — the worker can change it after first sign-in."
-      />
-      <Select label="Role" value={role} onChange={(v) => setRole(v as UserRole)} options={ROLE_OPTIONS} />
-
-      <div>
+      <div className="space-y-5 py-2">
+        <Field label="Full name" value={fullName} onChange={setFullName} placeholder="Amara Uwase" autoComplete="off" />
+        <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="amara@store.com" autoComplete="off" />
         <Field
-          label="Audit tag"
-          value={workerTag}
-          onChange={(v) => { setWorkerTag(v.toUpperCase()); setTagEdited(true); }}
-          mono
-          hint="Stamped onto every offline sale this worker processes at the register."
+          label="Temporary password"
+          type="password"
+          value={password}
+          onChange={setPassword}
+          placeholder="••••••••"
+          autoComplete="new-password"
+          hint="Minimum 8 characters — the worker can change it after first sign-in."
         />
-        <button
-          type="button"
-          onClick={() => { setWorkerTag(suggestWorkerTag(fullName)); setTagEdited(false); }}
-          className="mt-1.5 text-[11px] text-pulse hover:text-pulse-hover font-medium flex items-center gap-1"
-        >
-          <span className="material-symbols-outlined text-sm">refresh</span>
-          Regenerate tag
-        </button>
-      </div>
+        <Select label="Role" value={role} onChange={(v) => setRole(v as UserRole)} options={ROLE_OPTIONS} />
 
-      {error && (
-        <div className="text-[12px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-          {error}
+        <div className="space-y-2">
+          <Field
+            label="Audit tag"
+            value={workerTag}
+            onChange={(v) => { setWorkerTag(v.toUpperCase()); setTagEdited(true); }}
+            mono
+            hint="Stamped onto every offline sale this worker processes at the register."
+          />
+          <button
+            type="button"
+            onClick={() => { setWorkerTag(suggestWorkerTag(fullName)); setTagEdited(false); }}
+            className="mt-2 text-[10px] font-mono font-bold text-[#0052ff] hover:text-[#0042d9] flex items-center gap-1.5 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+              <path d="M16 16h5v5"/>
+            </svg>
+            Regenerate tag
+          </button>
         </div>
-      )}
+
+        {error && (
+          <div className="text-[11px] font-medium text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">
+            {error}
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }
