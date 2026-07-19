@@ -1,3 +1,4 @@
+// app/(app)/inventory/page.tsx
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
 import Card from '@/components/ui/Card';
@@ -8,6 +9,7 @@ import { inventory } from '@/lib/endpoints';
 import { ApiError } from '@/lib/api';
 import type { Product } from '@/lib/types';
 import RequireRole from '@/components/RequireRole';
+import ProductFormModal from '@/components/inventory/ProductFormModal'; // New component
 
 const SEARCH_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="text-zinc-400">
@@ -50,28 +52,67 @@ function statusOf(p: Product): Status {
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'live'; products: Product[] }
-  | { kind: 'stub' } // 501 — endpoint not implemented, use SAMPLE
+  | { kind: 'stub' }
   | { kind: 'error'; message: string };
 
 export default function InventoryPage() {
   const [q, setQ] = useState('');
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const loadProducts = async () => {
+    setState({ kind: 'loading' });
+    try {
+      const res = await inventory.listProducts();
+      setState({ kind: 'live', products: res.products ?? [] });
+    } catch (err) {
+      if (err instanceof ApiError && err.isNotImplemented) {
+        setState({ kind: 'stub' });
+      } else if (err instanceof ApiError) {
+        setState({ kind: 'error', message: err.message });
+      } else {
+        setState({ kind: 'error', message: 'Could not reach the gateway on :8080.' });
+      }
+    }
+  };
 
   useEffect(() => {
-    let active = true;
-    inventory
-      .listProducts()
-      .then((res) => active && setState({ kind: 'live', products: res.products ?? [] }))
-      .catch((err) => {
-        if (!active) return;
-        if (err instanceof ApiError && err.isNotImplemented) setState({ kind: 'stub' });
-        else if (err instanceof ApiError) setState({ kind: 'error', message: err.message });
-        else setState({ kind: 'error', message: 'Could not reach the gateway on :8080.' });
-      });
-    return () => {
-      active = false;
-    };
+    loadProducts();
   }, []);
+
+  const handleAddProduct = () => {
+    setEditingProduct(null);
+    setIsModalOpen(true);
+  };
+
+  const handleEditProduct = (product: Product) => {
+    setEditingProduct(product);
+    setIsModalOpen(true);
+  };
+
+  const handleSaveProduct = async (productData: Partial<Product>) => {
+    setIsSubmitting(true);
+    try {
+      if (editingProduct) {
+        // Update existing product
+        await inventory.updateProduct(editingProduct.id, productData);
+      } else {
+        // Create new product
+        await inventory.createProduct(productData as Omit<Product, 'id' | 'created_at' | 'updated_at'>);
+      }
+      // Reload products
+      await loadProducts();
+      setIsModalOpen(false);
+      setEditingProduct(null);
+    } catch (err) {
+      console.error('Failed to save product:', err);
+      throw err;
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const products = state.kind === 'live' ? state.products : SAMPLE;
 
@@ -108,7 +149,11 @@ export default function InventoryPage() {
             <Button variant="outline" size="sm" className="border-zinc-200 bg-white text-zinc-650 hover:bg-zinc-50 hover:text-zinc-800 text-[13px] font-bold">
               Export CSV
             </Button>
-            <Button size="sm" className="bg-[#0052ff] hover:bg-[#003bbf] text-white font-bold text-[13px] py-2.5 rounded-xl shadow-md shadow-[#0052ff]/10">
+            <Button 
+              size="sm" 
+              className="bg-[#0052ff] hover:bg-[#003bbf] text-white font-bold text-[13px] py-2.5 rounded-xl shadow-md shadow-[#0052ff]/10"
+              onClick={handleAddProduct}
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="mr-1.5">
                 <path d="M12 5v14M5 12h14" strokeLinecap="round" />
               </svg>
@@ -197,7 +242,10 @@ export default function InventoryPage() {
                         </td>
                         <td className="py-3.5 px-4">
                           <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-                            <button className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200/30 hover:bg-zinc-200 transition-colors">
+                            <button 
+                              className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200/30 hover:bg-zinc-200 transition-colors"
+                              onClick={() => handleEditProduct(p)}
+                            >
                               Edit
                             </button>
                             <button className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-[#0052ff]/10 text-[#0052ff] hover:bg-[#0052ff]/20 transition-colors">
@@ -221,6 +269,18 @@ export default function InventoryPage() {
           )}
         </div>
       </div>
+
+      {/* Product Form Modal */}
+      <ProductFormModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingProduct(null);
+        }}
+        onSave={handleSaveProduct}
+        product={editingProduct}
+        isSubmitting={isSubmitting}
+      />
     </RequireRole>
   );
 }
