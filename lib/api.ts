@@ -41,7 +41,9 @@ export class ApiError extends Error {
   get isUnreachable(): boolean {
     return this.message.includes('ECONNREFUSED') || 
            this.message.includes('unreachable') ||
-           this.message.includes('Failed to fetch');
+           this.message.includes('Failed to fetch') ||
+           this.message.includes('NetworkError') ||
+           this.message.includes('fetch failed');
   }
 
   get isServiceUnavailable(): boolean {
@@ -68,7 +70,9 @@ interface RequestOptions {
   auth?: boolean;
   skipRefresh?: boolean;
   mutationId?: string;
-  timeout?: number; // Added timeout option
+  timeout?: number;
+  tenantId?: string;
+  retries?: number; // Number of retries for network errors
 }
 
 async function getAccessToken(): Promise<string | null> {
@@ -119,23 +123,21 @@ async function parseError(res: Response): Promise<ApiError> {
       };
     }
   } catch (jsonError) {
-    // If response is not JSON, try to get text
     try {
       const text = await res.text();
       if (text) {
-        payload.error = text.slice(0, 200); // Limit text length
+        payload.error = text.slice(0, 200);
       }
     } catch (textError) {
-      // Ignore - use default error
+      // Ignore
     }
   }
   
-  // Create detailed error object
   const error = new ApiError(res.status, payload);
   
-  // Add additional context
+  // Add additional context based on status
   if (error.isUnreachable) {
-    error.message = `Unable to connect to the service. Please ensure the backend is running.`;
+    error.message = `Unable to connect to the service at ${API_BASE}. Please ensure the backend is running.`;
   } else if (error.isServiceUnavailable) {
     error.message = `Service is temporarily unavailable. Please try again later.`;
   } else if (error.isUnauthorized) {
@@ -149,7 +151,14 @@ async function parseError(res: Response): Promise<ApiError> {
   return error;
 }
 
-/** Core request helper. */
+/** 
+ * Sleep helper for retry backoff 
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** Core request helper with retry logic. */
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const {
     method = 'GET',
@@ -159,18 +168,18 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     auth = true,
     skipRefresh = false,
     mutationId,
-    timeout = 30000, // 30 second timeout
+    timeout = 30000,
+    tenantId,
+    retries = 3, // Default 3 retries
   } = opts;
 
-  const isMutation = method !== 'GET';
   const finalHeaders: Record<string, string> = { ...headers };
 
-  // Set content type for JSON body
   if (body !== undefined) {
     finalHeaders['Content-Type'] = 'application/json';
   }
 
-  // Add authentication headers if required
+  // Add authentication headers
   if (auth) {
     try {
       const token = await getAccessToken();
@@ -183,12 +192,12 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
       console.error('[API] Error getting access token:', error);
     }
 
-    // Add tenant ID if available
+    // Add tenant ID - use provided tenantId or from tokenStore
     try {
-      const tenantId = tokenStore.tenantId;
-      if (tenantId && !('X-Tenant-Id' in finalHeaders)) {
-        finalHeaders['X-Tenant-Id'] = tenantId;
-      } else if (!tenantId && auth) {
+      const effectiveTenantId = tenantId || tokenStore.tenantId;
+      if (effectiveTenantId && !('X-Tenant-Id' in finalHeaders)) {
+        finalHeaders['X-Tenant-Id'] = effectiveTenantId;
+      } else if (!effectiveTenantId && auth) {
         console.warn('[API] No tenant ID available for authenticated request');
       }
     } catch (error) {
@@ -196,134 +205,312 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     }
   }
 
-  // Add mutation ID for idempotency
-  if (isMutation && !('X-Client-Mutation-Id' in finalHeaders)) {
+  if (method !== 'GET' && !('X-Client-Mutation-Id' in finalHeaders)) {
     finalHeaders['X-Client-Mutation-Id'] = mutationId ?? uuid();
   }
 
-  // Add request ID for tracing
   if (!('X-Request-Id' in finalHeaders)) {
     finalHeaders['X-Request-Id'] = uuid();
   }
 
-  // Log request for debugging (development only)
+  const fullUrl = buildUrl(path, query);
+
   if (process.env.NODE_ENV === 'development') {
     console.log('[API] Request:', {
       method,
       path,
-      url: buildUrl(path, query),
+      url: fullUrl,
       hasAuth: !!finalHeaders['Authorization'],
       hasTenant: !!finalHeaders['X-Tenant-Id'],
+      tenantId: finalHeaders['X-Tenant-Id'],
+      retries,
     });
   }
 
-  // Create abort controller for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  let lastError: Error | null = null;
 
-  try {
-    // First attempt
-    let res = await fetch(buildUrl(path, query), {
-      method,
-      headers: finalHeaders,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
-
-    // If 401 and we can refresh, try once more
-    if (res.status === 401 && auth && !skipRefresh) {
-      console.log('[API] Token expired, attempting refresh...');
-      
-      try {
-        const newToken = await refreshAccessToken();
-        if (newToken) {
-          finalHeaders['Authorization'] = `Bearer ${newToken}`;
-          // Retry with new token
-          res = await fetch(buildUrl(path, query), {
-            method,
-            headers: finalHeaders,
-            body: body !== undefined ? JSON.stringify(body) : undefined,
-            signal: controller.signal,
-          });
-          console.log('[API] Token refresh successful, retrying request...');
-        } else {
-          console.warn('[API] Token refresh failed, no new token');
-        }
-      } catch (refreshError) {
-        console.error('[API] Error during token refresh:', refreshError);
-      }
-    }
-
-    // Clear timeout
-    clearTimeout(timeoutId);
-
-    // Handle non-2xx responses
-    if (!res.ok) {
-      const error = await parseError(res);
-      throw error;
-    }
-
-    // Handle empty responses
-    if (res.status === 204 || res.headers.get('content-length') === '0') {
-      return undefined as T;
-    }
-
-    // Parse JSON response
-    const text = await res.text();
-    if (!text) {
-      return undefined as T;
-    }
+  // Retry loop for network errors
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     try {
-      return JSON.parse(text) as T;
-    } catch (parseError) {
-      console.error('[API] Failed to parse JSON response:', parseError);
-      throw new ApiError(500, {
-        error: 'Invalid response format from server',
-        code: 'INTERNAL_ERROR',
-        details: { path, responsePreview: text.slice(0, 100) },
+      let res = await fetch(fullUrl, {
+        method,
+        headers: finalHeaders,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
       });
-    }
-  } catch (error) {
-    clearTimeout(timeoutId);
-    
-    // Handle fetch errors (network issues)
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
+
+      clearTimeout(timeoutId);
+
+      // Handle 401 with token refresh
+      if (res.status === 401 && auth && !skipRefresh) {
+        console.log('[API] Token expired, attempting refresh...');
+        
+        try {
+          const newToken = await refreshAccessToken();
+          if (newToken) {
+            finalHeaders['Authorization'] = `Bearer ${newToken}`;
+            res = await fetch(fullUrl, {
+              method,
+              headers: finalHeaders,
+              body: body !== undefined ? JSON.stringify(body) : undefined,
+            });
+            console.log('[API] Token refresh successful, retrying request...');
+          } else {
+            console.warn('[API] Token refresh failed, no new token');
+          }
+        } catch (refreshError) {
+          console.error('[API] Error during token refresh:', refreshError);
+        }
+      }
+
+      // If response is OK, process it
+      if (res.ok) {
+        if (res.status === 204 || res.headers.get('content-length') === '0') {
+          return undefined as T;
+        }
+
+        const text = await res.text();
+        if (!text) {
+          return undefined as T;
+        }
+
+        try {
+          return JSON.parse(text) as T;
+        } catch (parseError) {
+          console.error('[API] Failed to parse JSON response:', parseError);
+          throw new ApiError(500, {
+            error: 'Invalid response format from server',
+            code: 'INTERNAL_ERROR',
+            details: { path, responsePreview: text.slice(0, 100) },
+          });
+        }
+      }
+
+      // Handle non-OK responses
+      const error = await parseError(res);
+      throw error;
+
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      // Check if it's a network error that should be retried
+      const isNetworkError = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message.includes('ECONNREFUSED') ||
+        error.message.includes('Failed to fetch') ||
+        error.message.includes('NetworkError') ||
+        error.message.includes('fetch failed') ||
+        error.message.includes('network')
+      );
+
+      // If it's a network error and we have retries left
+      if (isNetworkError && attempt < retries) {
+        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
+        console.log(`[API] Network error (attempt ${attempt}/${retries}), retrying in ${delay}ms...`, error.message);
+        lastError = error;
+        await sleep(delay);
+        continue; // Retry
+      }
+
+      // If it's an ApiError, re-throw it
+      if (error instanceof ApiError) {
+        throw error;
+      }
+
+      // Handle timeout specifically
+      if (error instanceof Error && error.name === 'AbortError') {
         throw new ApiError(504, {
           error: 'Request timed out. The service may be slow or unavailable.',
           code: 'TIMEOUT',
           details: { path, timeout },
         });
       }
-      
-      if (error.message.includes('ECONNREFUSED') || 
-          error.message.includes('Failed to fetch') ||
-          error.message.includes('NetworkError')) {
-        throw new ApiError(503, {
-          error: 'Unable to connect to the service. Please ensure the backend is running.',
-          code: 'SERVICE_UNAVAILABLE',
-          details: { path, originalError: error.message },
-        });
-      }
+
+      // For any other error, create an ApiError
+      throw new ApiError(503, {
+        error: error instanceof Error ? error.message : 'Unable to connect to the service. Please ensure the backend is running.',
+        code: 'SERVICE_UNAVAILABLE',
+        details: { 
+          path, 
+          baseUrl: API_BASE,
+          originalError: error instanceof Error ? error.message : String(error),
+          attempts: attempt,
+        },
+      });
     }
-    
-    // Re-throw ApiError or convert to ApiError
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    
-    throw new ApiError(500, {
-      error: error instanceof Error ? error.message : 'An unexpected error occurred',
-      code: 'INTERNAL_ERROR',
-      details: { path, originalError: error },
-    });
   }
+
+  // If we exhausted all retries
+  throw new ApiError(503, {
+    error: `Unable to connect to the service after ${retries} attempts. Please ensure the backend is running.`,
+    code: 'SERVICE_UNAVAILABLE',
+    details: { 
+      path, 
+      baseUrl: API_BASE,
+      lastError: lastError?.message,
+    },
+  });
 }
 
 // ============================================
-// API Service Helpers
+// API Service Helpers - Updated for Multi-Tenant
 // ============================================
+
+/** WhatsApp API - Updated for Multi-Tenant Support */
+export const whatsapp = {
+  // Connect - Start or resume WhatsApp session
+  connect: (tenantId?: string) =>
+    request<{ 
+      success: boolean;
+      status: 'DISCONNECTED' | 'AUTHENTICATING' | 'READY' | 'FAILED';
+      qr?: string;
+      tenantId: string;
+      timestamp: string;
+    }>('/api/v1/whatsapp/connect', {
+      method: 'POST',
+      auth: true,
+      tenantId,
+      timeout: 15000,
+      retries: 2, // Only 2 retries for connect
+    }),
+  
+  // Get status for the current tenant
+  getStatus: (tenantId?: string) =>
+    request<{ 
+      success: boolean;
+      status: 'DISCONNECTED' | 'AUTHENTICATING' | 'READY' | 'FAILED' | 'TIMEOUT';
+      qr?: string;
+      health?: 'healthy' | 'unhealthy' | 'unknown';
+      messageCount?: number;
+      lastActivity?: string;
+      timestamp: string;
+    }>('/api/v1/whatsapp/status', {
+      auth: true,
+      tenantId,
+      timeout: 10000,
+      retries: 2,
+    }),
+  
+  // Send a single message
+  sendMessage: (number: string, message: string, tenantId?: string) =>
+    request<{ 
+      success: boolean; 
+      messageId: string;
+      recipient: string;
+      tenantId: string;
+      timestamp: string;
+    }>('/api/v1/whatsapp/send', {
+      method: 'POST',
+      body: { number, message },
+      auth: true,
+      tenantId,
+      timeout: 30000,
+      retries: 1,
+    }),
+  
+  // Send bulk messages
+  sendBulk: (recipients: string[], message: string, options?: {
+    delayBetween?: number;
+    chunkSize?: number;
+    customMessages?: Record<string, string>;
+    waitForAll?: boolean;
+  }, tenantId?: string) =>
+    request<{
+      success: boolean;
+      summary: {
+        total: number;
+        successful: number;
+        failed: number;
+      };
+      results: Array<{
+        number: string;
+        success: boolean;
+        messageId?: string;
+        error?: string;
+        timestamp: string;
+      }>;
+      errors: string[];
+      tenantId: string;
+      startedAt: string;
+      completedAt: string;
+    }>('/api/v1/whatsapp/send-bulk', {
+      method: 'POST',
+      body: { recipients, message, options },
+      auth: true,
+      tenantId,
+      timeout: 120000, // 2 minutes for bulk
+      retries: 1,
+    }),
+  
+  // Logout and destroy session
+  logout: (tenantId?: string) =>
+    request<{ 
+      success: boolean; 
+      status: string;
+      tenantId: string;
+      timestamp: string;
+    }>('/api/v1/whatsapp/logout', {
+      method: 'POST',
+      auth: true,
+      tenantId,
+      retries: 2,
+    }),
+  
+  // Admin: List all sessions (requires admin privileges)
+  listSessions: () =>
+    request<{
+      success: boolean;
+      stats: {
+        total: number;
+        ready: number;
+        authenticating: number;
+        failed: number;
+        disconnected: number;
+        timeout: number;
+      };
+      sessions: Array<{
+        tenantId: string;
+        status: string;
+        messageCount: number;
+        createdAt: string;
+        lastActivity: string;
+        lastError?: string;
+      }>;
+      timestamp: string;
+    }>('/api/v1/whatsapp/admin/sessions', {
+      auth: true,
+      timeout: 10000,
+      retries: 2,
+    }),
+  
+  // Public status (no auth required)
+  getPublicStatus: () =>
+    request<{
+      success: boolean;
+      status: string;
+      stats: {
+        total: number;
+        ready: number;
+        authenticating: number;
+        failed: number;
+        disconnected: number;
+      };
+      recentSessions: Array<{
+        tenantId: string;
+        status: string;
+        messageCount: number;
+        lastActivity: string;
+      }>;
+      timestamp: string;
+    }>('/api/v1/whatsapp/public-status', {
+      auth: false,
+      timeout: 5000,
+      retries: 3,
+    }),
+};
 
 /** Auth API */
 export const auth = {
@@ -331,60 +518,52 @@ export const auth = {
     request<LoginResponse>('/api/v1/auth/login', {
       method: 'POST',
       body: { email, password },
+      retries: 2,
     }),
   
   register: (data: RegisterRequest) =>
     request<RegisterResponse>('/api/v1/auth/register', {
       method: 'POST',
       body: data,
+      retries: 2,
     }),
   
   refresh: (refreshToken: string) =>
     request<RefreshResponse>('/api/v1/auth/refresh', {
       method: 'POST',
       body: { refreshToken },
+      retries: 2,
     }),
   
   logout: (refreshToken: string) =>
     request<void>('/api/v1/auth/logout', {
       method: 'POST',
       body: { refreshToken },
-    }),
-};
-
-/** WhatsApp API */
-export const whatsapp = {
-  getStatus: () =>
-    request<{ 
-      status: 'DISCONNECTED' | 'AUTHENTICATING' | 'READY' | 'UNAVAILABLE';
-      qr?: string;
-      timestamp?: string;
-    }>('/api/v1/whatsapp/status', {
-      auth: true,
-      timeout: 10000, // 10 second timeout for status
-    }),
-  
-  sendMessage: (number: string, message: string) =>
-    request<{ success: boolean; messageId: string }>('/api/v1/whatsapp/send', {
-      method: 'POST',
-      body: { number, message },
-      auth: true,
-      timeout: 30000, // 30 second timeout for sending
-    }),
-  
-  logout: () =>
-    request<{ success: boolean; status: string }>('/api/v1/whatsapp/logout', {
-      method: 'POST',
-      auth: true,
+      retries: 2,
     }),
 };
 
 /** Health Check */
 export const health = {
   check: () =>
-    request<{ status: string; service: string; timestamp: string }>('/health', {
+    request<{ 
+      status: string; 
+      service: string;
+      version?: string;
+      environment?: string;
+      sessions?: {
+        total: number;
+        ready: number;
+        authenticating: number;
+        failed: number;
+        disconnected: number;
+        timeout: number;
+      };
+      timestamp: string;
+    }>('/health', {
       auth: false,
       timeout: 5000,
+      retries: 3,
     }),
 };
 
@@ -434,5 +613,30 @@ export interface RefreshResponse {
   expiresIn: number;
 }
 
-// Re-export for convenience
+// Helper to check if service is reachable
+export async function checkServiceReachability(): Promise<{ reachable: boolean; url: string; message?: string }> {
+  try {
+    const response = await fetch(`${API_BASE}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000),
+    });
+    
+    if (response.ok) {
+      return { reachable: true, url: API_BASE };
+    }
+    
+    return { 
+      reachable: false, 
+      url: API_BASE,
+      message: `Service returned status ${response.status}` 
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      url: API_BASE,
+      message: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
 export { uuid };
