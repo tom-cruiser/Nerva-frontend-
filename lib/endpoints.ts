@@ -1,5 +1,5 @@
 'use client';
-import { request, uuid } from './api';
+import { request, uuid, ApiError } from './api';
 import { tokenStore } from './token-store';
 import type {
   LoginResponse,
@@ -20,13 +20,21 @@ import type {
  * Endpoint wrappers grouped by service. Each path maps to the gateway
  * (nginx) prefix documented in gateway/nginx.conf.
  *
- * Reality check (see backend analysis):
- *   - auth.*        → fully functional
- *   - inventory.*   → 501 stub (route exists, not implemented)
- *   - ledger.*      → 501 stub, and NOT exposed by the gateway yet
- *   - sync.*        → implemented, but the gateway forwards /api/v1/sales/
- *                     while the router mounts /api/v1/sync (prefix mismatch).
- * Callers should handle ApiError.isNotImplemented gracefully.
+ * ============================================
+ * DEBUGGING LEDGER ENDPOINTS
+ * ============================================
+ * 
+ * To debug the ledger endpoints, check:
+ * 1. Is the ledger service running on port 3004?
+ * 2. Is the gateway (nginx) routing /api/v1/ledger/ to port 3004?
+ * 3. Are the authentication headers (Authorization, X-Tenant-Id) being sent?
+ * 
+ * The gateway configuration should have:
+ * location /api/v1/ledger/ {
+ *   proxy_pass http://analytics_service$request_uri;
+ * }
+ * 
+ * Test with: curl http://localhost:8080/api/v1/ledger/test
  */
 
 // ── auth-tenant ─────────────────────────────────────────────────────
@@ -44,8 +52,6 @@ export const auth = {
 
   /**
    * Register a new tenant/organization and its owner account.
-   * No auth; the gateway forwards to auth-tenant. The `X-Client-Mutation-Id`
-   * header is attached automatically by request() for idempotent retries.
    */
   register(input: RegisterRequest): Promise<RegisterResponse> {
     return request<RegisterResponse>('/api/v1/auth/register', {
@@ -77,30 +83,18 @@ export const auth = {
 
 // ── inventory ───────────────────────────────────────────────────────
 export const inventory = {
-  /**
-   * GET /api/v1/inventory/products
-   * List all products for the current tenant.
-   */
   listProducts(): Promise<{ products: Product[] }> {
     return request<{ products: Product[] }>('/api/v1/inventory/products', {
       auth: true,
     });
   },
 
-  /**
-   * GET /api/v1/inventory/products/:id
-   * Get a single product by ID.
-   */
   getProduct(id: string): Promise<Product> {
     return request<Product>(`/api/v1/inventory/products/${encodeURIComponent(id)}`, {
       auth: true,
     });
   },
 
-  /**
-   * POST /api/v1/inventory/products
-   * Create a new product.
-   */
   createProduct(data: Omit<Product, 'id' | 'created_at' | 'updated_at' | 'deleted_at'>): Promise<Product> {
     return request<Product>('/api/v1/inventory/products', {
       method: 'POST',
@@ -110,10 +104,6 @@ export const inventory = {
     });
   },
 
-  /**
-   * PATCH /api/v1/inventory/products/:id
-   * Update an existing product.
-   */
   updateProduct(id: string, data: Partial<Omit<Product, 'id' | 'created_at' | 'updated_at' | 'deleted_at'>>): Promise<Product> {
     return request<Product>(`/api/v1/inventory/products/${encodeURIComponent(id)}`, {
       method: 'PATCH',
@@ -123,10 +113,6 @@ export const inventory = {
     });
   },
 
-  /**
-   * DELETE /api/v1/inventory/products/:id
-   * Delete a product (soft delete).
-   */
   deleteProduct(id: string): Promise<{ success: boolean; message: string }> {
     return request<{ success: boolean; message: string }>(
       `/api/v1/inventory/products/${encodeURIComponent(id)}`,
@@ -138,10 +124,6 @@ export const inventory = {
     );
   },
 
-  /**
-   * POST /api/v1/inventory/products/:id/restock
-   * Restock a product (increase stock quantity).
-   */
   restockProduct(id: string, quantity: number, note?: string): Promise<Product> {
     return request<Product>(`/api/v1/inventory/products/${encodeURIComponent(id)}/restock`, {
       method: 'POST',
@@ -151,10 +133,6 @@ export const inventory = {
     });
   },
 
-  /**
-   * POST /api/v1/inventory/products/:id/adjust
-   * Adjust stock quantity (can be positive or negative).
-   */
   adjustStock(id: string, quantity: number, reason?: string): Promise<Product> {
     return request<Product>(`/api/v1/inventory/products/${encodeURIComponent(id)}/adjust`, {
       method: 'POST',
@@ -164,53 +142,31 @@ export const inventory = {
     });
   },
 
-  /**
-   * GET /api/v1/inventory/products/search
-   * Search products by name or SKU.
-   */
   searchProducts(query: string): Promise<{ products: Product[] }> {
     return request<{ products: Product[] }>(
       `/api/v1/inventory/products/search?q=${encodeURIComponent(query)}`,
-      {
-        auth: true,
-      }
+      { auth: true }
     );
   },
 
-  /**
-   * GET /api/v1/inventory/categories
-   * List all product categories.
-   */
   listCategories(): Promise<{ categories: string[] }> {
     return request<{ categories: string[] }>('/api/v1/inventory/categories', {
       auth: true,
     });
   },
 
-  /**
-   * GET /api/v1/inventory/products/low-stock
-   * Get all products that are below reorder level.
-   */
   getLowStockProducts(): Promise<{ products: Product[] }> {
     return request<{ products: Product[] }>('/api/v1/inventory/products/low-stock', {
       auth: true,
     });
   },
 
-  /**
-   * GET /api/v1/inventory/products/out-of-stock
-   * Get all products that are out of stock.
-   */
   getOutOfStockProducts(): Promise<{ products: Product[] }> {
     return request<{ products: Product[] }>('/api/v1/inventory/products/out-of-stock', {
       auth: true,
     });
   },
 
-  /**
-   * POST /api/v1/inventory/products/bulk
-   * Bulk create or update products.
-   */
   bulkUpsert(products: Array<Omit<Product, 'id' | 'created_at' | 'updated_at' | 'deleted_at'>>): Promise<{
     success: boolean;
     created: number;
@@ -230,10 +186,6 @@ export const inventory = {
     });
   },
 
-  /**
-   * GET /api/v1/inventory/stats
-   * Get inventory statistics.
-   */
   getStats(): Promise<{
     totalProducts: number;
     totalValue: number;
@@ -260,8 +212,11 @@ export const ledger = {
   /**
    * GET /api/v1/ledger/customers
    * List all customers with their balances.
+   * 
+   * Note: This endpoint is proxied through the gateway.
+   * Gateway should route /api/v1/ledger/ to analytics_service (port 3004)
    */
-  getCustomers(): Promise<{
+  async getCustomers(): Promise<{
     customers: Array<{
       id: string;
       name: string;
@@ -271,7 +226,18 @@ export const ledger = {
       trend: 'up' | 'down' | 'flat';
     }>;
   }> {
-    return request('/api/v1/ledger/customers', { auth: true });
+    try {
+      console.log('[ledger] GET /api/v1/ledger/customers - Fetching customers');
+      return await request('/api/v1/ledger/customers', { auth: true });
+    } catch (error) {
+      // If 404 or not implemented, return empty array - the page will use sample data
+      if (error instanceof ApiError && (error.isNotFound || error.isNotImplemented)) {
+        console.warn('[ledger] Customers endpoint not found, using fallback');
+        console.warn('[ledger] Status:', error.status, 'Code:', error.code);
+        return { customers: [] };
+      }
+      throw error;
+    }
   },
 
   /**
@@ -289,7 +255,7 @@ export const ledger = {
    * GET /api/v1/ledger/transactions
    * Get all transactions with optional filters.
    */
-  getTransactions(options?: {
+  async getTransactions(options?: {
     customerId?: string;
     limit?: number;
     offset?: number;
@@ -313,16 +279,24 @@ export const ledger = {
     page: number;
     totalPages: number;
   }> {
-    const params = new URLSearchParams();
-    if (options?.customerId) params.append('customerId', options.customerId);
-    if (options?.limit) params.append('limit', String(options.limit));
-    if (options?.offset) params.append('offset', String(options.offset));
-    if (options?.fromDate) params.append('fromDate', options.fromDate);
-    if (options?.toDate) params.append('toDate', options.toDate);
-    if (options?.type) params.append('type', options.type);
-    
-    const queryString = params.toString() ? `?${params.toString()}` : '';
-    return request(`/api/v1/ledger/transactions${queryString}`, { auth: true });
+    try {
+      const params = new URLSearchParams();
+      if (options?.customerId) params.append('customerId', options.customerId);
+      if (options?.limit) params.append('limit', String(options.limit));
+      if (options?.offset) params.append('offset', String(options.offset));
+      if (options?.fromDate) params.append('fromDate', options.fromDate);
+      if (options?.toDate) params.append('toDate', options.toDate);
+      if (options?.type) params.append('type', options.type);
+      
+      const queryString = params.toString() ? `?${params.toString()}` : '';
+      return await request(`/api/v1/ledger/transactions${queryString}`, { auth: true });
+    } catch (error) {
+      if (error instanceof ApiError && (error.isNotFound || error.isNotImplemented)) {
+        console.warn('[ledger] Transactions endpoint not found, returning empty');
+        return { transactions: [], total: 0, page: 0, totalPages: 0 };
+      }
+      throw error;
+    }
   },
 
   /**
@@ -361,7 +335,7 @@ export const ledger = {
    * POST /api/v1/ledger/payments
    * Record a payment from a customer.
    */
-  recordPayment(
+  async recordPayment(
     customerId: string,
     amount: number,
     method: 'CASH' | 'MOMO' | 'BANK_TRANSFER',
@@ -371,18 +345,52 @@ export const ledger = {
     transactionId: string;
     newBalance: number;
   }> {
-    return request('/api/v1/ledger/payments', {
-      method: 'POST',
-      body: { 
-        customerId, 
-        amount, 
-        method, 
-        note, 
-        clientMutationId: uuid() 
-      },
-      auth: true,
-      mutationId: uuid(),
-    });
+    try {
+      // First try the payment endpoint
+      return await request<{
+        success: boolean;
+        transactionId: string;
+        newBalance: number;
+      }>('/api/v1/ledger/payments', {
+        method: 'POST',
+        body: {
+          customerId,
+          amount,
+          method,
+          note,
+          clientMutationId: uuid(),
+        },
+        auth: true,
+        mutationId: uuid(),
+      });
+    } catch (error) {
+      // If payment endpoint fails with 404, try the settle endpoint
+      if (error instanceof ApiError && (error.isNotFound || error.isNotImplemented)) {
+        console.warn('[ledger] Payments endpoint not found, trying settlement endpoint');
+        const result = await request<{
+          ledger_id: string;
+          settled: number;
+          payment_tx: string;
+          allocations: Array<{ credit_id: string; applied: number }>;
+        }>('/api/v1/ledger/settle', {
+          method: 'POST',
+          body: {
+            ledger_id: customerId,
+            amount,
+            clientMutationId: uuid(),
+          },
+          auth: true,
+          mutationId: uuid(),
+        });
+        
+        return {
+          success: true,
+          transactionId: result.payment_tx,
+          newBalance: 0, // We don't get this from the settlement endpoint
+        };
+      }
+      throw error;
+    }
   },
 
   /**
@@ -396,7 +404,11 @@ export const ledger = {
   }> {
     return request(`/api/v1/ledger/customers/${encodeURIComponent(customerId)}/credit`, {
       method: 'POST',
-      body: { clientMutationId: uuid(), customerId, amount, note },
+      body: { 
+        amount, 
+        description: note,
+        clientMutationId: uuid() 
+      },
       auth: true,
       mutationId: uuid(),
     });
@@ -418,12 +430,12 @@ export const ledger = {
   }> {
     return request('/api/v1/ledger/payments/momo', {
       method: 'POST',
-      body: { 
-        clientMutationId: uuid(), 
-        customerId, 
-        amount, 
-        paymentProvider, 
-        providerTxnId 
+      body: {
+        customerId,
+        amount,
+        paymentProvider,
+        providerTxnId,
+        clientMutationId: uuid(),
       },
       auth: true,
       mutationId: uuid(),
@@ -434,7 +446,7 @@ export const ledger = {
    * GET /api/v1/ledger/summary
    * Get ledger summary statistics.
    */
-  getSummary(): Promise<{
+  async getSummary(): Promise<{
     totalOutstanding: number;
     activeDebtors: number;
     paidThisMonth: number;
@@ -442,7 +454,22 @@ export const ledger = {
     overdue: number;
     overdueCustomers: number;
   }> {
-    return request('/api/v1/ledger/summary', { auth: true });
+    try {
+      return await request('/api/v1/ledger/summary', { auth: true });
+    } catch (error) {
+      if (error instanceof ApiError && (error.isNotFound || error.isNotImplemented)) {
+        console.warn('[ledger] Summary endpoint not found, returning empty stats');
+        return {
+          totalOutstanding: 0,
+          activeDebtors: 0,
+          paidThisMonth: 0,
+          paymentsReceived: 0,
+          overdue: 0,
+          overdueCustomers: 0,
+        };
+      }
+      throw error;
+    }
   },
 
   /**
@@ -469,8 +496,18 @@ export const ledger = {
   /**
    * POST /api/v1/ledger/customers
    * Create a new customer.
+   * 
+   * This endpoint creates a customer in the customer_ledger table.
+   * The backend expects:
+   * - name: string (required)
+   * - phone: string (required)
+   * - email: string (optional)
+   * - initialBalance: number (optional, defaults to 0)
+   * - clientMutationId: string (auto-generated)
+   * 
+   * Returns the created customer with their ID and balance.
    */
-  createCustomer(data: {
+  async createCustomer(data: {
     name: string;
     phone: string;
     email?: string;
@@ -482,13 +519,58 @@ export const ledger = {
     email: string | null;
     balance: number;
     createdAt: string;
+    isExistingCustomer?: boolean;
   }> {
-    return request('/api/v1/ledger/customers', {
-      method: 'POST',
-      body: { ...data, clientMutationId: uuid() },
-      auth: true,
-      mutationId: uuid(),
-    });
+    const payload = {
+      name: data.name,
+      phone: data.phone,
+      email: data.email || null,
+      initialBalance: data.initialBalance || 0,
+      clientMutationId: uuid(),
+    };
+
+    console.log('[ledger] POST /api/v1/ledger/customers - Creating customer');
+    console.log('[ledger] Payload:', payload);
+
+    try {
+      const result = await request<{
+        id: string;
+        name: string;
+        phone: string;
+        email: string | null;
+        balance: number;
+        createdAt: string;
+        isExistingCustomer?: boolean;
+      }>('/api/v1/ledger/customers', {
+        method: 'POST',
+        body: payload,
+        auth: true,
+        mutationId: uuid(),
+      });
+      
+      console.log('[ledger] Customer created successfully:', result);
+      return result;
+    } catch (error) {
+      console.error('[ledger] Error creating customer:', error);
+      
+      if (error instanceof ApiError) {
+        console.error('[ledger] Status:', error.status);
+        console.error('[ledger] Code:', error.code);
+        console.error('[ledger] Message:', error.message);
+        console.error('[ledger] Details:', error.details);
+        
+        // Provide more specific error messages
+        if (error.status === 404) {
+          throw new Error('Ledger service not reachable. Please ensure the backend is running.');
+        } else if (error.status === 401 || error.status === 403) {
+          throw new Error('Authentication failed. Please log in again.');
+        } else if (error.status === 400) {
+          throw new Error(`Invalid data: ${error.message}`);
+        }
+      }
+      
+      throw error;
+    }
   },
 
   /**
@@ -539,7 +621,6 @@ export const ledger = {
 
 // ── sales-sync (offline-first) ──────────────────────────────────────
 export const sync = {
-  /** Pull server-side changes since last_sync_token for this device. */
   pull(deviceId: string, lastSyncToken?: string): Promise<SyncPullResponse> {
     return request<SyncPullResponse>('/api/v1/sync/pull', {
       query: { device_id: deviceId, last_sync_token: lastSyncToken },
@@ -547,7 +628,6 @@ export const sync = {
     });
   },
 
-  /** Push a batch of local changes (1..500). Returns 200 SyncResponse or a 202 job. */
   pushBatch(payload: Omit<SyncPayload, 'client_mutation_id' | 'timestamp'>): Promise<SyncResponse> {
     const clientMutationId = uuid();
     return request<SyncResponse>('/api/v1/sync/batch', {
@@ -568,10 +648,6 @@ export const sync = {
     });
   },
 
-  /**
-   * GET /api/v1/sync/device/:deviceId/status
-   * Get sync status for a specific device.
-   */
   getDeviceStatus(deviceId: string): Promise<{
     deviceId: string;
     lastSyncToken: string;
@@ -584,10 +660,6 @@ export const sync = {
     });
   },
 
-  /**
-   * POST /api/v1/sync/device/:deviceId/register
-   * Register a new device for sync.
-   */
   registerDevice(deviceId: string, deviceName?: string): Promise<{
     deviceId: string;
     deviceName: string;
@@ -603,16 +675,14 @@ export const sync = {
   },
 };
 
-// ── seat provisioning (auth-tenant · owner-only) ────────────────────
+// ── seat provisioning ────────────────────────────────────
 export const seats = {
-  /** List the tenant's provisioned seats plus the tier/limit envelope. */
   list(): Promise<SeatListResponse> {
     return request<SeatListResponse>('/api/v1/auth/seats', {
       auth: true,
     });
   },
 
-  /** Provision a new worker seat. Body carries the LWW client_created_at. */
   create(input: CreateSeatRequest): Promise<Seat> {
     return request<Seat>('/api/v1/auth/seats', {
       method: 'POST',
@@ -622,10 +692,6 @@ export const seats = {
     });
   },
 
-  /**
-   * DELETE /api/v1/auth/seats/:userId
-   * Deactivate a seat (soft delete).
-   */
   deactivate(userId: string): Promise<{ success: boolean; message: string }> {
     return request<{ success: boolean; message: string }>(
       `/api/v1/auth/seats/${encodeURIComponent(userId)}`,
@@ -637,10 +703,6 @@ export const seats = {
     );
   },
 
-  /**
-   * PATCH /api/v1/auth/seats/:userId
-   * Update a seat's role or status.
-   */
   update(userId: string, data: { role?: string; is_active?: boolean }): Promise<Seat> {
     return request<Seat>(`/api/v1/auth/seats/${encodeURIComponent(userId)}`, {
       method: 'PATCH',

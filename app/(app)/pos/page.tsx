@@ -1,11 +1,13 @@
 'use client';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import RequireRole from '@/components/RequireRole';
 import ProductCard from '@/components/pos/ProductCard';
 import CartModal from '@/components/pos/CartModal';
+import { inventory } from '@/lib/endpoints';
+import { ApiError } from '@/lib/api';
 
 const SEARCH_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="text-zinc-400">
@@ -13,23 +15,30 @@ const SEARCH_ICON = (
   </svg>
 );
 
-const CATALOG = [
-  { sku: 'RICE-50KG', name: 'Rice 50kg', price: 18000, stock: 2 },
-  { sku: 'COIL-2L', name: 'Cooking Oil 2L', price: 2800, stock: 0 },
-  { sku: 'SUGA-25KG', name: 'Sugar 25kg', price: 9200, stock: 24 },
-  { sku: 'TOMA-400G', name: 'Tomato Paste 400g', price: 650, stock: 88 },
-  { sku: 'SOAP-LUX', name: 'Lux Soap ×12', price: 4200, stock: 15 },
-  { sku: 'MILK-1L', name: 'UHT Milk 1L', price: 1200, stock: 6 },
-  { sku: 'MAIZ-25KG', name: 'Maize Flour 25kg', price: 7600, stock: 32 },
-  { sku: 'FLOU-25KG', name: 'Flour 25kg', price: 8800, stock: 1 },
-  { sku: 'BEAN-20KG', name: 'Beans 20kg', price: 15000, stock: 10 },
-  { sku: 'SALT-1KG', name: 'Salt 1kg', price: 500, stock: 45 },
-  { sku: 'SUGAR-1KG', name: 'Sugar 1kg', price: 450, stock: 30 },
-  { sku: 'RICE-10KG', name: 'Rice 10kg', price: 4200, stock: 15 },
-];
-
-type CartItem = { sku: string; name: string; price: number; qty: number };
+type CartItem = { 
+  sku: string; 
+  name: string; 
+  price: number; 
+  qty: number;
+  stock: number;
+  id?: string;
+};
 type PaymentMethod = 'CASH' | 'MOMO' | 'CREDIT' | 'CARD';
+
+// Product type from backend
+interface Product {
+  id: string;
+  product_sku: string;
+  name: string;
+  barcode: string | null;
+  description: string | null;
+  unit_price: number;
+  stock_quantity: number;
+  reorder_level: number;
+  category: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export default function PosPage() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,58 +48,131 @@ export default function PosPage() {
   const [isCharged, setIsCharged] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  
+  // State for real data
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Categories for filtering
+  // ─── Categories from real data ──────────────────────────────────────────────
   const categories = useMemo(() => {
-    const cats = new Set(CATALOG.map(p => p.name.split(' ')[0]));
+    const cats = new Set(products.map(p => p.category || 'Uncategorized'));
     return ['All', ...Array.from(cats)];
+  }, [products]);
+
+  // ─── Fetch Products from Backend ────────────────────────────────────────────
+  const loadProducts = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await inventory.listProducts();
+      // Handle different response formats
+      let productList: Product[] = [];
+      if (response && typeof response === 'object') {
+        if (Array.isArray(response)) {
+          productList = response;
+        } else if ('products' in response && Array.isArray(response.products)) {
+          productList = response.products;
+        } else if ('data' in response && Array.isArray(response.data)) {
+          productList = response.data;
+        } else {
+          // Try to extract products from response
+          productList = Object.values(response).flat().filter(
+            (item: any) => item && typeof item === 'object' && 'product_sku' in item
+          ) as Product[];
+        }
+      }
+      setProducts(productList);
+    } catch (err) {
+      console.error('Failed to load products:', err);
+      if (err instanceof ApiError) {
+        if (err.isNotImplemented) {
+          setError('Inventory API not implemented. Using sample data.');
+          loadSampleProducts();
+        } else if (err.isNotFound) {
+          setError('Products endpoint not found. Using sample data.');
+          loadSampleProducts();
+        } else {
+          setError(`Failed to load products: ${err.message}`);
+          loadSampleProducts();
+        }
+      } else {
+        setError('Failed to load products. Please check your connection.');
+        loadSampleProducts();
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  // Filter products based on search AND category
+  // ─── Load Sample Products (Fallback) ──────────────────────────────────────
+  const loadSampleProducts = () => {
+    const sampleProducts: Product[] = [
+      { id: '1', product_sku: 'RICE-50KG', name: 'Rice 50kg', barcode: null, description: null, unit_price: 18000, stock_quantity: 2, reorder_level: 5, category: 'Rice', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: '2', product_sku: 'COIL-2L', name: 'Cooking Oil 2L', barcode: null, description: null, unit_price: 2800, stock_quantity: 0, reorder_level: 3, category: 'Oil', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: '3', product_sku: 'SUGA-25KG', name: 'Sugar 25kg', barcode: null, description: null, unit_price: 9200, stock_quantity: 24, reorder_level: 5, category: 'Sugar', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: '4', product_sku: 'TOMA-400G', name: 'Tomato Paste 400g', barcode: null, description: null, unit_price: 650, stock_quantity: 88, reorder_level: 10, category: 'Canned', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: '5', product_sku: 'SOAP-LUX', name: 'Lux Soap ×12', barcode: null, description: null, unit_price: 4200, stock_quantity: 15, reorder_level: 5, category: 'Soap', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: '6', product_sku: 'MILK-1L', name: 'UHT Milk 1L', barcode: null, description: null, unit_price: 1200, stock_quantity: 6, reorder_level: 3, category: 'Dairy', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    ];
+    setProducts(sampleProducts);
+  };
+
+  // ─── Load products on mount ──────────────────────────────────────────────────
+  useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
+
+  // ─── Filter products ─────────────────────────────────────────────────────────
   const filteredProducts = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    return CATALOG.filter(p => {
+    return products.filter(p => {
       const matchesQuery =
-        p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query);
+        p.name.toLowerCase().includes(query) || 
+        p.product_sku.toLowerCase().includes(query) ||
+        (p.barcode && p.barcode.toLowerCase().includes(query));
       const matchesCategory =
-        !selectedCategory || p.name.startsWith(selectedCategory);
+        !selectedCategory || 
+        selectedCategory === 'All' || 
+        (p.category || 'Uncategorized') === selectedCategory;
       return matchesQuery && matchesCategory;
     });
-  }, [searchQuery, selectedCategory]);
+  }, [searchQuery, selectedCategory, products]);
 
-  // Get quantity of a product in cart
+  // ─── Cart Functions ─────────────────────────────────────────────────────────
   const getCartQuantity = (sku: string) => {
     const item = cart.find(c => c.sku === sku);
     return item?.qty || 0;
   };
 
-  // Add product to cart
-  const addToCart = (product: typeof CATALOG[0]) => {
-    if (product.stock === 0) return;
+  const addToCart = (product: Product) => {
+    if (product.stock_quantity === 0) return;
 
-    const currentQty = getCartQuantity(product.sku);
-    if (currentQty >= product.stock) {
-      // Show toast or notification that max stock reached
+    const currentQty = getCartQuantity(product.product_sku);
+    if (currentQty >= product.stock_quantity) {
+      // Show toast or notification
       return;
     }
 
     setCart(prev => {
-      const existing = prev.find(c => c.sku === product.sku);
+      const existing = prev.find(c => c.sku === product.product_sku);
       if (existing) {
         return prev.map(c =>
-          c.sku === product.sku ? { ...c, qty: c.qty + 1 } : c
+          c.sku === product.product_sku ? { ...c, qty: c.qty + 1 } : c
         );
       }
       return [...prev, {
-        sku: product.sku,
+        sku: product.product_sku,
         name: product.name,
-        price: product.price,
-        qty: 1
+        price: product.unit_price,
+        qty: 1,
+        stock: product.stock_quantity,
+        id: product.id,
       }];
     });
   };
 
-  // Update quantity
   const updateQty = (sku: string, qty: number) => {
     if (qty <= 0) {
       removeItem(sku);
@@ -99,53 +181,98 @@ export default function PosPage() {
     setCart(prev => prev.map(c => c.sku === sku ? { ...c, qty } : c));
   };
 
-  // Remove item from cart
   const removeItem = (sku: string) => {
     setCart(prev => prev.filter(c => c.sku !== sku));
   };
 
-  // Clear cart
   const clearCart = () => {
     setCart([]);
     setIsCharged(false);
   };
 
-  // Calculate totals
+  // ─── Calculate totals ────────────────────────────────────────────────────────
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const tax = Math.round(subtotal * 0.05);
   const total = subtotal + tax;
 
-  // Handle charge/payment
-  const handleCharge = () => {
+  // ─── Handle Payment ─────────────────────────────────────────────────────────
+  const handleCharge = async () => {
     if (cart.length === 0) return;
+    
     setIsCharging(true);
+    setIsSubmitting(true);
+    setError(null);
 
-    // Simulate payment processing
-    setTimeout(() => {
+    try {
+      // Prepare sale data
+      const saleData = {
+        items: cart.map(item => ({
+          product_sku: item.sku,
+          quantity: item.qty,
+          unit_price: item.price,
+        })),
+        payment_method: method,
+        total_amount: total,
+        discount_amount: 0,
+        tax_amount: tax,
+      };
+
+      // TODO: Call your sales/create endpoint
+      // const response = await sales.createSale(saleData);
+      
+      // Simulate API call for now
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
       setIsCharged(true);
       setIsCharging(false);
+      setIsSubmitting(false);
 
-      // Auto-close modal after success
+      // Clear cart after success
       setTimeout(() => {
         setCart([]);
         setIsCharged(false);
         setIsCartOpen(false);
       }, 2000);
-    }, 1500);
+
+    } catch (err) {
+      console.error('Payment failed:', err);
+      setError('Payment failed. Please try again.');
+      setIsCharging(false);
+      setIsSubmitting(false);
+    }
   };
 
-  // Mobile: toggle cart
+  // ─── Total items ────────────────────────────────────────────────────────────
+  const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
+
+  // ─── Toggle cart ────────────────────────────────────────────────────────────
   const toggleCart = () => {
     if (cart.length === 0) return;
     setIsCartOpen(!isCartOpen);
   };
 
-  // Get total items in cart
-  const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
+  // ─── Loading State ──────────────────────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-56px)] bg-zinc-50/50">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#0052ff] border-t-transparent mx-auto"></div>
+          <p className="text-zinc-500 font-medium">Loading products...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <RequireRole requiredPermission="sales:create">
       <div className="flex flex-col h-[calc(100vh-56px)] bg-zinc-50/50">
+        {/* Error Display */}
+        {error && (
+          <div className="bg-red-50 border-b border-red-200 p-3 text-center text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
         {/* Desktop Layout */}
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           {/* ── Left: Product Grid ── */}
@@ -185,11 +312,16 @@ export default function PosPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5 sm:gap-3 auto-rows-min">
                 {filteredProducts.map(product => (
                   <ProductCard
-                    key={product.sku}
-                    product={product}
-                    onAdd={addToCart}
-                    quantityInCart={getCartQuantity(product.sku)}
-                    isDisabled={product.stock === 0}
+                    key={product.product_sku}
+                    product={{
+                      sku: product.product_sku,
+                      name: product.name,
+                      price: product.unit_price,
+                      stock: product.stock_quantity,
+                    }}
+                    onAdd={() => addToCart(product)}
+                    quantityInCart={getCartQuantity(product.product_sku)}
+                    isDisabled={product.stock_quantity === 0}
                   />
                 ))}
                 {filteredProducts.length === 0 && (
@@ -218,7 +350,7 @@ export default function PosPage() {
                 </svg>
                 Cart
                 {totalItems > 0 && (
-                  <Badge color="blue" className="ml-1">{totalItems}</Badge>
+                  <Badge variant="info" className="ml-1">{totalItems}</Badge>
                 )}
               </h2>
               {cart.length > 0 && (
@@ -314,7 +446,7 @@ export default function PosPage() {
                   size="lg"
                   loading={isCharging}
                   onClick={handleCharge}
-                  disabled={isCharged}
+                  disabled={isCharged || isSubmitting}
                 >
                   {isCharging ? 'Processing…' : isCharged ? '✓ Paid' : `Charge XAF ${total.toLocaleString()}`}
                 </Button>

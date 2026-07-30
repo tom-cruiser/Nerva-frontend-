@@ -7,6 +7,8 @@ import { ledger } from '@/lib/endpoints';
 import { ApiError } from '@/lib/api';
 import PaymentFormModal from '@/components/ledgers/PaymentFormModal';
 import CustomerDetailModal from '@/components/ledgers/CustomerDetailModal';
+import AddCustomerModal from '@/components/ledgers/AddCustomerModal';
+import EditCustomerModal from '@/components/ledgers/EditCustomerModal';
 
 type PaymentType = 'PAYMENT' | 'CREDIT';
 type PaymentMethod = 'CASH' | 'MOMO' | 'BANK_TRANSFER';
@@ -49,7 +51,10 @@ export default function LedgersPage() {
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [isCustomerDetailOpen, setIsCustomerDetailOpen] = useState(false);
+  const [isAddCustomerModalOpen, setIsAddCustomerModalOpen] = useState(false);
+  const [isEditCustomerModalOpen, setIsEditCustomerModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [summary, setSummary] = useState<LedgerSummary | null>(null);
@@ -64,22 +69,77 @@ export default function LedgersPage() {
     setError(null);
     
     try {
-      // Fetch all data in parallel
-      const [customersData, transactionsData, summaryData] = await Promise.all([
+      // Fetch all data in parallel - UPDATED to match backend
+      const [customersData, summaryData] = await Promise.all([
         ledger.getCustomers(),
-        ledger.getTransactions({ limit: 100 }),
         ledger.getSummary(),
       ]);
 
+      // If we have customers, fetch transactions for each or use a combined approach
+      let allTransactions: Transaction[] = [];
+      
+      if (customersData.customers.length > 0) {
+        // Try to fetch transactions for all customers
+        const transactionPromises = customersData.customers.map(async (customer) => {
+          try {
+            const txData = await ledger.getCustomerTransactions(customer.id, { limit: 5 });
+            return txData.transactions.map(tx => ({
+              id: tx.id,
+              type: tx.type as 'PAYMENT' | 'CREDIT',
+              customer: customer.name,
+              customerId: customer.id,
+              amount: Math.abs(tx.amount),
+              ref: `TXN-${tx.id.slice(0, 8)}`,
+              date: new Date(tx.createdAt).toLocaleString(),
+              balance: 0,
+              method: 'CASH' as 'CASH',
+              note: tx.description,
+            }));
+          } catch (err) {
+            console.warn(`Failed to fetch transactions for customer ${customer.id}:`, err);
+            return [] as Transaction[];
+          }
+        });
+
+        const results = await Promise.all(transactionPromises);
+        allTransactions = results.flat();
+        
+        // Sort by date (newest first)
+        allTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      }
+
       setCustomers(customersData.customers);
-      setTransactions(transactionsData.transactions);
-      setSummary(summaryData);
+      setTransactions(allTransactions.slice(0, 100));
+      
+      // Update summary with real data
+      if (summaryData) {
+        setSummary({
+          totalOutstanding: summaryData.totalOutstanding || 0,
+          activeDebtors: summaryData.activeDebtors || 0,
+          paidThisMonth: summaryData.paidThisMonth || 0,
+          paymentsReceived: summaryData.paymentsReceived || 0,
+          overdue: summaryData.overdue || 0,
+          overdueCustomers: summaryData.overdueCustomers || 0,
+        });
+      } else {
+        // Fallback summary from customer data
+        const totalDebt = customersData.customers.reduce((sum, c) => sum + c.balance, 0);
+        const activeDebtors = customersData.customers.filter(c => c.balance > 0).length;
+        setSummary({
+          totalOutstanding: totalDebt,
+          activeDebtors: activeDebtors,
+          paidThisMonth: 0,
+          paymentsReceived: 0,
+          overdue: 0,
+          overdueCustomers: 0,
+        });
+      }
       
       // Update last activity timestamps
       if (customersData.customers.length > 0) {
         const updatedCustomers = customersData.customers.map(c => ({
           ...c,
-          lastActivity: formatLastActivity(c.lastActivity),
+          lastActivity: formatLastActivity(c.lastActivity || new Date().toISOString()),
         }));
         setCustomers(updatedCustomers);
       }
@@ -88,15 +148,16 @@ export default function LedgersPage() {
       console.error('Failed to load ledger data:', err);
       if (err instanceof ApiError) {
         if (err.isNotImplemented) {
-          setError('Ledger API is not yet implemented on the backend. Showing sample data.');
-          // Load sample data as fallback
+          setError('Ledger API is not yet fully implemented on the backend. Showing sample data.');
+          loadSampleData();
+        } else if (err.isNotFound) {
+          setError('Ledger endpoints not found. Using sample data for demonstration.');
           loadSampleData();
         } else {
           setError(`Failed to load ledger data: ${err.message}`);
         }
       } else {
         setError('Failed to load ledger data. Please check your connection.');
-        // Load sample data as fallback
         loadSampleData();
       }
     } finally {
@@ -219,6 +280,11 @@ export default function LedgersPage() {
     setIsCustomerDetailOpen(true);
   };
 
+  const handleEditCustomer = (customer: Customer) => {
+    setEditingCustomer(customer);
+    setIsEditCustomerModalOpen(true);
+  };
+
   // Refresh data
   const handleRefresh = () => {
     loadData();
@@ -265,6 +331,20 @@ export default function LedgersPage() {
             {isLoading ? 'Loading...' : 'Refresh'}
           </Button>
           <Button 
+            onClick={() => setIsAddCustomerModalOpen(true)}
+            variant="outline"
+            className="border-zinc-200 bg-white hover:bg-zinc-50"
+            disabled={isLoading}
+          >
+            <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="8.5" cy="7" r="4"/>
+              <line x1="20" y1="8" x2="20" y2="14"/>
+              <line x1="23" y1="11" x2="17" y2="11"/>
+            </svg>
+            Add Customer
+          </Button>
+          <Button 
             onClick={() => setIsPaymentModalOpen(true)}
             className="bg-[#0052ff] hover:bg-[#0041cc] text-white font-bold disabled:opacity-50"
             disabled={isLoading}
@@ -281,14 +361,14 @@ export default function LedgersPage() {
       {/* Error Display */}
       {error && (
         <div className={`rounded-xl p-4 ${
-          error.includes('not yet implemented') 
+          error.includes('not yet implemented') || error.includes('not found')
             ? 'bg-amber-50 border border-amber-200 text-amber-700'
             : 'bg-red-50 border border-red-200 text-red-700'
         }`}>
           <div className="flex items-start gap-3">
-            <span className="text-xl">{error.includes('not yet implemented') ? '⚠️' : '❌'}</span>
+            <span className="text-xl">{error.includes('not yet implemented') || error.includes('not found') ? '⚠️' : '❌'}</span>
             <div>
-              <p className="font-bold">{error.includes('not yet implemented') ? 'Notice' : 'Error'}</p>
+              <p className="font-bold">{error.includes('not yet implemented') || error.includes('not found') ? 'Notice' : 'Error'}</p>
               <p className="text-sm">{error}</p>
             </div>
           </div>
@@ -367,32 +447,49 @@ export default function LedgersPage() {
                 </div>
               ) : (
                 customers.map(c => (
-                  <button 
+                  <div 
                     key={c.id} 
-                    onClick={() => {
-                      setActiveCustomerId(activeCustomerId === c.id ? null : c.id);
-                      handleViewCustomer(c);
-                    }}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all border
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all border group
                       ${activeCustomerId === c.id 
                         ? 'bg-[#0052ff]/[0.04] border-[#0052ff]/30 shadow-sm' 
                         : 'border-transparent bg-zinc-50/40 hover:bg-zinc-50/90 hover:scale-[1.01]'}`}
                   >
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 transition-colors
-                      ${activeCustomerId === c.id ? 'bg-[#0052ff] text-white' : 'bg-zinc-100 text-zinc-500'}`}>
-                      {c.name.split(' ').map(w => w[0]).join('')}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-bold text-zinc-850 truncate">{c.name}</p>
-                      <p className="text-[11px] text-zinc-400 font-medium">{c.phone}</p>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className={`text-[13px] font-bold font-mono ${c.balance === 0 ? 'text-emerald-600' : 'text-[#0052ff]'}`}>
-                        {c.balance === 0 ? 'Clear' : `XAF ${c.balance.toLocaleString()}`}
-                      </p>
-                      <p className="text-[10px] text-zinc-400 font-medium">{c.lastActivity}</p>
-                    </div>
-                  </button>
+                    <button
+                      onClick={() => {
+                        setActiveCustomerId(activeCustomerId === c.id ? null : c.id);
+                        handleViewCustomer(c);
+                      }}
+                      className="flex-1 flex items-center gap-3 min-w-0"
+                    >
+                      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[11px] font-black flex-shrink-0 transition-colors
+                        ${activeCustomerId === c.id ? 'bg-[#0052ff] text-white' : 'bg-zinc-100 text-zinc-500'}`}>
+                        {c.name.split(' ').map(w => w[0]).join('')}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-bold text-zinc-850 truncate">{c.name}</p>
+                        <p className="text-[11px] text-zinc-400 font-medium">{c.phone}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className={`text-[13px] font-bold font-mono ${c.balance === 0 ? 'text-emerald-600' : 'text-[#0052ff]'}`}>
+                          {c.balance === 0 ? 'Clear' : `XAF ${c.balance.toLocaleString()}`}
+                        </p>
+                        <p className="text-[10px] text-zinc-400 font-medium">{c.lastActivity}</p>
+                      </div>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditCustomer(c);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-zinc-200 rounded-lg flex-shrink-0"
+                      title="Edit customer"
+                    >
+                      <svg className="w-4 h-4 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 20h9" strokeLinecap="round"/>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -500,6 +597,30 @@ export default function LedgersPage() {
           setIsCustomerDetailOpen(false);
           setIsPaymentModalOpen(true);
         }}
+        onEditCustomer={() => {
+          if (selectedCustomer) {
+            setIsCustomerDetailOpen(false);
+            handleEditCustomer(selectedCustomer);
+          }
+        }}
+      />
+
+      {/* Add Customer Modal */}
+      <AddCustomerModal
+        isOpen={isAddCustomerModalOpen}
+        onClose={() => setIsAddCustomerModalOpen(false)}
+        onSuccess={loadData}
+      />
+
+      {/* Edit Customer Modal */}
+      <EditCustomerModal
+        isOpen={isEditCustomerModalOpen}
+        onClose={() => {
+          setIsEditCustomerModalOpen(false);
+          setEditingCustomer(null);
+        }}
+        onSuccess={loadData}
+        customer={editingCustomer}
       />
     </div>
   );
