@@ -14,6 +14,12 @@ import type {
   CreateSeatRequest,
   Seat,
   SeatListResponse,
+  NoOpenShift,
+  CurrentShift,
+  OpenShiftResponse,
+  CloseShiftResponse,
+  ShiftHistoryEntry,
+  StaffPerformanceResponse,
 } from './types';
 
 /**
@@ -713,6 +719,50 @@ export const seats = {
   },
 };
 
+// ── shifts (cash drawer open/close/reconcile) ────────────────────────
+export const shifts = {
+  /**
+   * The current open shift, or `{ status: 'NO_OPEN_SHIFT' }` when the till
+   * hasn't been opened yet.
+   */
+  getCurrent(): Promise<CurrentShift | NoOpenShift> {
+    return request<CurrentShift | NoOpenShift>('/api/v1/shifts/current', {
+      auth: true,
+    });
+  },
+
+  open(openingBalance: number): Promise<OpenShiftResponse> {
+    return request<OpenShiftResponse>('/api/v1/shifts/open', {
+      method: 'POST',
+      body: { opening_balance: openingBalance },
+      auth: true,
+      mutationId: uuid(),
+    });
+  },
+
+  close(shiftId: string, reportedCash: number): Promise<CloseShiftResponse> {
+    return request<CloseShiftResponse>('/api/v1/shifts/close', {
+      method: 'POST',
+      body: { shift_id: shiftId, reported_cash: reportedCash },
+      auth: true,
+      mutationId: uuid(),
+    });
+  },
+
+  getHistory(limit = 20): Promise<{ shifts: ShiftHistoryEntry[] }> {
+    return request<{ shifts: ShiftHistoryEntry[] }>('/api/v1/shifts/history', {
+      query: { limit },
+      auth: true,
+    });
+  },
+
+  getStaffPerformance(): Promise<StaffPerformanceResponse> {
+    return request<StaffPerformanceResponse>('/api/v1/shifts/staff-performance', {
+      auth: true,
+    });
+  },
+};
+
 // ── Export all endpoints as a single object ─────────────────────────
 export const api = {
   auth,
@@ -720,6 +770,7 @@ export const api = {
   ledger,
   sync,
   seats,
+  shifts,
 };
 
 export default api;

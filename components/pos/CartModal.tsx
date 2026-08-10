@@ -26,6 +26,7 @@ interface CartModalProps {
   onCharge: () => void;
   isCharging: boolean;
   isCharged: boolean;
+  error?: string | null;
 }
 
 export default function CartModal({
@@ -43,6 +44,7 @@ export default function CartModal({
   onCharge,
   isCharging,
   isCharged,
+  error,
 }: CartModalProps) {
   if (!isOpen) return null;
 
@@ -179,6 +181,12 @@ export default function CartModal({
                   </button>
                 ))}
               </div>
+
+              {error && (
+                <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200/80 rounded-lg px-3 py-2.5">
+                  {error}
+                </div>
+              )}
 
               <Button
                 className="w-full py-3.5 text-sm font-bold uppercase tracking-wider rounded-xl bg-[#0052ff] hover:bg-[#003bbf] text-white shadow-md shadow-[#0052ff]/10"

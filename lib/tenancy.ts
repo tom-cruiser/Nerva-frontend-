@@ -1,5 +1,6 @@
 'use client';
 import { tokenStore } from './token-store';
+import { uuid } from './api';
 
 /**
  * Multi-tenant data-isolation + offline-first sync helpers.
@@ -42,4 +43,22 @@ export function stampLocalRecord<T extends Record<string, unknown>>(
     client_created_at: ts,
     updated_at: ts,
   };
+}
+
+const DEVICE_ID_KEY = 'nerva.deviceId';
+
+/**
+ * Stable per-browser device id required by the sales-sync batch protocol
+ * (every SyncChange carries a `device_id` for LWW conflict resolution).
+ * Minted once with `uuid()` and persisted in localStorage so the same
+ * browser/tab always presents the same device to the sync engine.
+ */
+export function getDeviceId(): string {
+  if (typeof window === 'undefined') return 'server';
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = uuid();
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
 }

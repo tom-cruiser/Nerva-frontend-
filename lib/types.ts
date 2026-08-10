@@ -12,7 +12,8 @@ export type Permission =
   | 'ledger:read' | 'ledger:credit' | 'ledger:payment'
   | 'users:read' | 'users:create' | 'users:update' | 'users:delete'
   | 'reports:read'
-  | 'whatsapp:send';
+  | 'whatsapp:send'
+  | 'shifts:read' | 'shifts:manage';
 
 /** Mirrors ROLE_PERMISSIONS in packages/types/src/tenant-context.ts */
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
@@ -22,6 +23,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'ledger:read', 'ledger:credit', 'ledger:payment',
     'users:read', 'users:create', 'users:update', 'users:delete',
     'reports:read', 'whatsapp:send',
+    'shifts:read', 'shifts:manage',
   ],
   MANAGER: [
     'inventory:read', 'inventory:create', 'inventory:update',
@@ -29,15 +31,18 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'ledger:read', 'ledger:credit', 'ledger:payment',
     'users:read',
     'reports:read', 'whatsapp:send',
+    'shifts:read', 'shifts:manage',
   ],
   STAFF: [
     'inventory:read',
     'sales:read', 'sales:create',
     'ledger:read',
     'reports:read',
+    'shifts:read', 'shifts:manage',
   ],
   VIEWER: [
     'inventory:read', 'sales:read', 'ledger:read', 'reports:read',
+    'shifts:read',
   ],
 };
 
@@ -271,4 +276,78 @@ export interface SyncPullResponse {
     sales: Sale[];
   };
   timestamp: string;
+}
+
+// ── Shifts (cash_drawer_shifts table) ────────────────────────────────
+/**
+ * A single shared till per tenant, not per-worker clock-in/out: opening a new
+ * shift force-closes whatever shift a previous worker left open.
+ */
+export type ShiftStatus = 'OPEN' | 'CLOSED' | 'ANOMALY' | 'FORCE_CLOSED';
+
+export interface NoOpenShift {
+  status: 'NO_OPEN_SHIFT';
+}
+
+export interface CurrentShift {
+  shift_id: string;
+  worker_tag: string;
+  opened_at: string;
+  opening_balance: number;
+  status: ShiftStatus;
+  /** CASH-only PAID sales since opened_at — what the physical drawer should hold. */
+  cash_sales_total: number;
+  /** All PAID sales regardless of payment method (CASH + MOMO + CARD). */
+  all_sales_total: number;
+  sales_count: number;
+}
+
+export interface OpenShiftResponse {
+  shift_id: string;
+  opened_at: string;
+  worker_tag: string;
+  opening_balance: number;
+  status: 'OPEN';
+}
+
+export interface CloseShiftResponse {
+  shift_id: string;
+  worker_tag: string;
+  opened_at: string;
+  opening_balance: number;
+  expected_cash: number;
+  reported_cash: number;
+  discrepancy: number;
+  status: ShiftStatus;
+  sales_total: number;
+}
+
+export interface ShiftHistoryEntry {
+  shift_id: string;
+  worker_tag: string;
+  closed_by_worker_tag: string | null;
+  opened_at: string;
+  closed_at: string;
+  opening_balance: number;
+  sales_total: number | null;
+  expected_cash: number | null;
+  reported_cash: number | null;
+  discrepancy: number | null;
+  status: ShiftStatus;
+}
+
+export interface StaffPerformanceEntry {
+  id: string;
+  full_name: string | null;
+  role: UserRole;
+  worker_tag: string;
+  is_active: boolean;
+  sales_count: number;
+  revenue: number;
+}
+
+export interface StaffPerformanceResponse {
+  window_start: string | null;
+  is_open: boolean;
+  staff: StaffPerformanceEntry[];
 }

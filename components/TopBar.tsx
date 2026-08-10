@@ -7,9 +7,11 @@ import { useAuth } from '../app/context/AuthContext';
 export default function TopBar({
   search,
   onSearch,
+  onMenuClick,
 }: {
   search: string;
   onSearch: (v: string) => void;
+  onMenuClick?: () => void;
 }) {
   const { user, logout } = useAuth();
   const router = useRouter();
@@ -26,28 +28,39 @@ export default function TopBar({
 
   return (
     <header className="
-      sticky top-0 z-40 
-      flex justify-between items-center h-16 px-8 
-      bg-white/40 backdrop-blur-3xl 
-      border-b border-white/60 
+      sticky top-0 z-40
+      flex justify-between items-center h-16 px-3 sm:px-5 lg:px-8 gap-3
+      bg-white/40 backdrop-blur-3xl
+      border-b border-white/60
       shadow-[0_8px_32px_-12px_rgba(11,30,51,0.04),0_1px_0_0_rgba(255,255,255,0.4)_inset]
     ">
-      {/* LEFT: BRAND SUB-TAG & CORE VERSION */}
-      <div className="flex items-center gap-3">
-        <span className="text-[11px] font-mono font-bold tracking-[0.2em] uppercase text-slate-400">
+      {/* LEFT: MOBILE MENU TOGGLE + BRAND SUB-TAG */}
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          onClick={onMenuClick}
+          aria-label="Open menu"
+          className="p-2 -ml-1 rounded-xl text-slate-500 hover:text-[#0052ff] hover:bg-white/60 transition-colors shrink-0 lg:hidden"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="4" x2="20" y1="6" y2="6" strokeLinecap="round" />
+            <line x1="4" x2="20" y1="12" y2="12" strokeLinecap="round" />
+            <line x1="4" x2="20" y1="18" y2="18" strokeLinecap="round" />
+          </svg>
+        </button>
+        <span className="text-[11px] font-mono font-bold tracking-[0.2em] uppercase text-slate-400 hidden sm:inline">
           Nerva
         </span>
-        <span className="h-3.5 w-px bg-slate-200" />
-        <span className="text-[10px] font-mono text-[#0052ff] font-bold bg-[#0052ff]/5 px-2.5 py-1 rounded-md border border-[#0052ff]/10">
+        <span className="h-3.5 w-px bg-slate-200 hidden lg:inline-block" />
+        <span className="text-[10px] font-mono text-[#0052ff] font-bold bg-[#0052ff]/5 px-2.5 py-1 rounded-md border border-[#0052ff]/10 hidden lg:inline-block">
           core: 1.2.4
         </span>
       </div>
 
       {/* RIGHT: SEARCH & USER ACTIONS */}
-      <div className="flex items-center gap-6">
-        
-        {/* SPACIOUS GLASS SEARCH BAR */}
-        <div className="relative group w-72">
+      <div className="flex items-center gap-2 sm:gap-4 lg:gap-6 min-w-0">
+
+        {/* GLASS SEARCH BAR — collapses below the tablet breakpoint */}
+        <div className="relative group hidden md:block md:w-48 lg:w-72">
           <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[#0052ff] transition-colors pointer-events-none">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/>
@@ -56,18 +69,18 @@ export default function TopBar({
           <input
             className="
               w-full
-              bg-white/60 
-              border border-slate-200/85 
-              rounded-2xl 
-              pl-10 pr-4 py-2.5 
-              text-xs 
-              text-[#0b1e33] 
-              placeholder-slate-400 
-              outline-none 
+              bg-white/60
+              border border-slate-200/85
+              rounded-2xl
+              pl-10 pr-4 py-2.5
+              text-xs
+              text-[#0b1e33]
+              placeholder-slate-400
+              outline-none
               font-medium
               transition-all duration-200
               focus:bg-white
-              focus:border-[#0052ff]/40 
+              focus:border-[#0052ff]/40
               focus:ring-4 focus:ring-[#0052ff]/5
               shadow-[inset_0_1px_2px_rgba(0,0,0,0.01)]
             "
@@ -79,8 +92,8 @@ export default function TopBar({
         </div>
 
         {/* PROFILE & LOGOUT SECTION */}
-        <div className="flex items-center gap-4 pl-5 border-l border-slate-200/60">
-          <div className="text-right hidden sm:block">
+        <div className="flex items-center gap-2 sm:gap-4 pl-2 sm:pl-5 border-l border-slate-200/60">
+          <div className="text-right hidden lg:block">
             <p className="text-xs font-bold text-[#0b1e33] tracking-tight">
               {user?.email ?? 'Not signed in'}
             </p>

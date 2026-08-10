@@ -6,8 +6,11 @@ import Input from '@/components/ui/Input';
 import RequireRole from '@/components/RequireRole';
 import ProductCard from '@/components/pos/ProductCard';
 import CartModal from '@/components/pos/CartModal';
-import { inventory } from '@/lib/endpoints';
-import { ApiError } from '@/lib/api';
+import { useAuth } from '@/app/context/AuthContext';
+import { inventory, sync } from '@/lib/endpoints';
+import { ApiError, uuid } from '@/lib/api';
+import { getDeviceId, nowTimestamptz } from '@/lib/tenancy';
+import type { Product, SyncChange, SyncResponse } from '@/lib/types';
 
 const SEARCH_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="text-zinc-400">
@@ -25,22 +28,18 @@ type CartItem = {
 };
 type PaymentMethod = 'CASH' | 'MOMO' | 'CREDIT' | 'CARD';
 
-// Product type from backend
-interface Product {
-  id: string;
-  product_sku: string;
-  name: string;
-  barcode: string | null;
-  description: string | null;
-  unit_price: number;
-  stock_quantity: number;
-  reorder_level: number;
-  category: string | null;
-  created_at: string;
-  updated_at: string;
+/** Sleep helper for polling the sync job status (slow-batch / 202 path). */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isSyncResponse(value: unknown): value is SyncResponse {
+  return !!value && typeof value === 'object' && 'accepted_changes' in value;
 }
 
 export default function PosPage() {
+  const { tenantId } = useAuth();
+
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [method, setMethod] = useState<PaymentMethod>('CASH');
@@ -48,12 +47,13 @@ export default function PosPage() {
   const [isCharged, setIsCharged] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  
+
   // State for real data
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [chargeError, setChargeError] = useState<string | null>(null);
+  const [stockNotice, setStockNotice] = useState<string | null>(null);
 
   // ─── Categories from real data ──────────────────────────────────────────────
   const categories = useMemo(() => {
@@ -62,8 +62,8 @@ export default function PosPage() {
   }, [products]);
 
   // ─── Fetch Products from Backend ────────────────────────────────────────────
-  const loadProducts = useCallback(async () => {
-    setIsLoading(true);
+  const loadProducts = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setIsLoading(true);
     setError(null);
     try {
       const response = await inventory.listProducts();
@@ -109,12 +109,12 @@ export default function PosPage() {
   // ─── Load Sample Products (Fallback) ──────────────────────────────────────
   const loadSampleProducts = () => {
     const sampleProducts: Product[] = [
-      { id: '1', product_sku: 'RICE-50KG', name: 'Rice 50kg', barcode: null, description: null, unit_price: 18000, stock_quantity: 2, reorder_level: 5, category: 'Rice', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: '2', product_sku: 'COIL-2L', name: 'Cooking Oil 2L', barcode: null, description: null, unit_price: 2800, stock_quantity: 0, reorder_level: 3, category: 'Oil', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: '3', product_sku: 'SUGA-25KG', name: 'Sugar 25kg', barcode: null, description: null, unit_price: 9200, stock_quantity: 24, reorder_level: 5, category: 'Sugar', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: '4', product_sku: 'TOMA-400G', name: 'Tomato Paste 400g', barcode: null, description: null, unit_price: 650, stock_quantity: 88, reorder_level: 10, category: 'Canned', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: '5', product_sku: 'SOAP-LUX', name: 'Lux Soap ×12', barcode: null, description: null, unit_price: 4200, stock_quantity: 15, reorder_level: 5, category: 'Soap', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: '6', product_sku: 'MILK-1L', name: 'UHT Milk 1L', barcode: null, description: null, unit_price: 1200, stock_quantity: 6, reorder_level: 3, category: 'Dairy', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: '1', product_sku: 'RICE-50KG', name: 'Rice 50kg', barcode: null, description: null, unit_price: 18000, stock_quantity: 2, reorder_level: 5, category: 'Rice', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '2', product_sku: 'COIL-2L', name: 'Cooking Oil 2L', barcode: null, description: null, unit_price: 2800, stock_quantity: 0, reorder_level: 3, category: 'Oil', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '3', product_sku: 'SUGA-25KG', name: 'Sugar 25kg', barcode: null, description: null, unit_price: 9200, stock_quantity: 24, reorder_level: 5, category: 'Sugar', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '4', product_sku: 'TOMA-400G', name: 'Tomato Paste 400g', barcode: null, description: null, unit_price: 650, stock_quantity: 88, reorder_level: 10, category: 'Canned', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '5', product_sku: 'SOAP-LUX', name: 'Lux Soap ×12', barcode: null, description: null, unit_price: 4200, stock_quantity: 15, reorder_level: 5, category: 'Soap', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '6', product_sku: 'MILK-1L', name: 'UHT Milk 1L', barcode: null, description: null, unit_price: 1200, stock_quantity: 6, reorder_level: 3, category: 'Dairy', updated_at: new Date().toISOString(), deleted_at: null },
     ];
     setProducts(sampleProducts);
   };
@@ -151,7 +151,8 @@ export default function PosPage() {
 
     const currentQty = getCartQuantity(product.product_sku);
     if (currentQty >= product.stock_quantity) {
-      // Show toast or notification
+      setStockNotice(`Only ${product.stock_quantity} of ${product.name} in stock.`);
+      setTimeout(() => setStockNotice(null), 2500);
       return;
     }
 
@@ -196,49 +197,114 @@ export default function PosPage() {
   const total = subtotal + tax;
 
   // ─── Handle Payment ─────────────────────────────────────────────────────────
+  // Sales go through the same offline-first sync protocol WatermelonDB would
+  // use (POST /api/v1/sync/batch): there is no separate "create sale" REST
+  // endpoint. A CREATE change on the `sales` collection is enough to record
+  // the transaction and let the backend apply the matching stock decrement.
   const handleCharge = async () => {
-    if (cart.length === 0) return;
-    
-    setIsCharging(true);
-    setIsSubmitting(true);
-    setError(null);
+    if (cart.length === 0 || isCharging) return;
 
-    try {
-      // Prepare sale data
-      const saleData = {
-        items: cart.map(item => ({
+    if (!tenantId) {
+      setChargeError('No active tenant on this session. Please log in again.');
+      return;
+    }
+
+    setIsCharging(true);
+    setChargeError(null);
+
+    const change: SyncChange = {
+      id: uuid(),
+      collection: 'sales',
+      action: 'CREATE',
+      data: {
+        transaction_id: uuid(),
+        items_sold: cart.map(item => ({
           product_sku: item.sku,
           quantity: item.qty,
           unit_price: item.price,
+          total: item.price * item.qty,
         })),
-        payment_method: method,
         total_amount: total,
         discount_amount: 0,
         tax_amount: tax,
-      };
+        payment_method: method,
+        payment_status: method === 'CREDIT' ? 'PENDING' : 'PAID',
+        sale_timestamp: nowTimestamptz(),
+      },
+      updated_at: nowTimestamptz(),
+      client_created_at: nowTimestamptz(),
+      device_id: getDeviceId(),
+    };
 
-      // TODO: Call your sales/create endpoint
-      // const response = await sales.createSale(saleData);
-      
-      // Simulate API call for now
-      await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      let result = await sync.pushBatch({
+        tenant_id: tenantId,
+        device_id: getDeviceId(),
+        changes: [change],
+      });
+
+      // Large batches return 202 + a jobId instead of the result inline —
+      // poll a few times before giving up on the fast path.
+      if (!isSyncResponse(result)) {
+        const jobId = (result as unknown as { jobId?: string }).jobId;
+        if (!jobId) throw new Error('Unexpected response from the sync service.');
+
+        let polled: SyncResponse | null = null;
+        for (let attempt = 0; attempt < 8 && !polled; attempt++) {
+          await sleep(1000);
+          const status = await sync.getStatus(jobId);
+          if (isSyncResponse(status)) polled = status;
+        }
+        if (!polled) {
+          // Still processing — the sale is queued server-side, not lost.
+          setIsCharged(true);
+          setTimeout(() => {
+            setCart([]);
+            setIsCharged(false);
+            setIsCartOpen(false);
+          }, 2000);
+          return;
+        }
+        result = polled;
+      }
+
+      const rejection = result.rejected_changes.find(r => r.id === change.id);
+      if (rejection) {
+        throw new Error(rejection.reason || 'The sale was rejected by the server.');
+      }
 
       setIsCharged(true);
-      setIsCharging(false);
-      setIsSubmitting(false);
 
-      // Clear cart after success
+      // Optimistically reflect the stock decrement, then reconcile silently
+      // against the server (a trigger there adjusts the real inventory row).
+      setProducts(prev =>
+        prev.map(p => {
+          const sold = cart.find(c => c.sku === p.product_sku);
+          return sold ? { ...p, stock_quantity: Math.max(0, p.stock_quantity - sold.qty) } : p;
+        }),
+      );
+      loadProducts({ silent: true });
+
       setTimeout(() => {
         setCart([]);
         setIsCharged(false);
         setIsCartOpen(false);
       }, 2000);
-
     } catch (err) {
       console.error('Payment failed:', err);
-      setError('Payment failed. Please try again.');
+      if (err instanceof ApiError) {
+        if (err.isForbidden) {
+          setChargeError("You don't have permission to record sales.");
+        } else if (err.status === 409) {
+          setChargeError('This sale is already being processed. Please wait a moment.');
+        } else {
+          setChargeError(err.message);
+        }
+      } else {
+        setChargeError(err instanceof Error ? err.message : 'Payment failed. Please try again.');
+      }
+    } finally {
       setIsCharging(false);
-      setIsSubmitting(false);
     }
   };
 
@@ -254,7 +320,7 @@ export default function PosPage() {
   // ─── Loading State ──────────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-56px)] bg-zinc-50/50">
+      <div className="flex items-center justify-center h-[calc(100dvh-64px)] bg-zinc-50/50">
         <div className="text-center space-y-4">
           <div className="animate-spin rounded-full h-12 w-12 border-4 border-[#0052ff] border-t-transparent mx-auto"></div>
           <p className="text-zinc-500 font-medium">Loading products...</p>
@@ -265,7 +331,7 @@ export default function PosPage() {
 
   return (
     <RequireRole requiredPermission="sales:create">
-      <div className="flex flex-col h-[calc(100vh-56px)] bg-zinc-50/50">
+      <div className="flex flex-col h-[calc(100dvh-64px)] bg-zinc-50/50">
         {/* Error Display */}
         {error && (
           <div className="bg-red-50 border-b border-red-200 p-3 text-center text-sm text-red-700">
@@ -305,6 +371,11 @@ export default function PosPage() {
                   ))}
                 </div>
               </div>
+              {stockNotice && (
+                <div className="mt-3 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2 animate-in fade-in slide-in-from-top-1 duration-150">
+                  {stockNotice}
+                </div>
+              )}
             </div>
 
             {/* Products Grid */}
@@ -350,7 +421,7 @@ export default function PosPage() {
                 </svg>
                 Cart
                 {totalItems > 0 && (
-                  <Badge variant="info" className="ml-1">{totalItems}</Badge>
+                  <Badge color="blue" className="ml-1">{totalItems}</Badge>
                 )}
               </h2>
               {cart.length > 0 && (
@@ -441,12 +512,18 @@ export default function PosPage() {
                   ))}
                 </div>
 
+                {chargeError && (
+                  <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200/80 rounded-lg px-3 py-2.5">
+                    {chargeError}
+                  </div>
+                )}
+
                 <Button
                   className="w-full py-3 text-sm font-bold uppercase tracking-wider rounded-xl bg-[#0052ff] hover:bg-[#003bbf] text-white shadow-md shadow-[#0052ff]/10"
                   size="lg"
                   loading={isCharging}
                   onClick={handleCharge}
-                  disabled={isCharged || isSubmitting}
+                  disabled={isCharged}
                 >
                   {isCharging ? 'Processing…' : isCharged ? '✓ Paid' : `Charge XAF ${total.toLocaleString()}`}
                 </Button>
@@ -508,6 +585,7 @@ export default function PosPage() {
           onCharge={handleCharge}
           isCharging={isCharging}
           isCharged={isCharged}
+          error={chargeError}
         />
       </div>
 

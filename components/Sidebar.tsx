@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../app/context/AuthContext';
@@ -64,15 +64,16 @@ const NAV: NavItem[] = [
     ), 
     permission: 'ledger:read' 
   },
-  { 
-    href: '/shifts', 
-    label: 'Shifts', 
+  {
+    href: '/shifts',
+    label: 'Shifts',
     icon: (props) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
-    ) 
+    ),
+    permission: 'shifts:read'
   },
   { 
     href: '/whatsapp', 
@@ -86,94 +87,129 @@ const NAV: NavItem[] = [
   },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  /** Mobile/tablet drawer state — ignored at the `lg` breakpoint, where the sidebar is always visible. */
+  isOpen?: boolean;
+  onClose?: () => void;
+}
+
+export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { user, hasPermission } = useAuth();
 
   const items = NAV.filter((n) => !n.permission || hasPermission(n.permission));
 
+  // Auto-close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    onClose?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
   return (
-    <aside className="
-      h-screen w-64 fixed left-0 top-0 
-      bg-white/40 backdrop-blur-3xl 
-      border-r border-white/60 
-      flex flex-col py-6 z-50 
-      shadow-[4px_0_32px_rgba(11,30,51,0.02),1px_0_0_0_rgba(255,255,255,0.4)_inset]
-    ">
-      {/* BRANDING HEADER */}
-      <div className="px-6 mb-8 flex items-center gap-3">
-        <div className="relative flex items-center justify-center">
-          {/* Subtle radiating pulse behind the logo bar */}
-          <div className="absolute inset-0 bg-[#0052ff]/20 blur-md rounded-full animate-pulse" />
-          <div className="relative w-2.5 h-7 bg-[#0052ff] rounded-full shadow-[0_0_16px_rgba(0,82,255,0.4)]" />
+    <>
+      {/* Backdrop — mobile/tablet only, dismisses the drawer on tap. */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-[#0b1e33]/30 backdrop-blur-[2px] lg:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={`
+        h-dvh w-64 fixed left-0 top-0
+        bg-white/95 lg:bg-white/40 backdrop-blur-3xl
+        border-r border-white/60
+        flex flex-col py-6 z-50
+        shadow-[4px_0_32px_rgba(11,30,51,0.02),1px_0_0_0_rgba(255,255,255,0.4)_inset]
+        transition-transform duration-300 ease-out
+        ${isOpen ? 'translate-x-0' : '-translate-x-full'}
+        lg:translate-x-0
+      `}>
+        {/* BRANDING HEADER */}
+        <div className="px-6 mb-8 flex items-center gap-3">
+          <div className="relative flex items-center justify-center">
+            {/* Subtle radiating pulse behind the logo bar */}
+            <div className="absolute inset-0 bg-[#0052ff]/20 blur-md rounded-full animate-pulse" />
+            <div className="relative w-2.5 h-7 bg-[#0052ff] rounded-full shadow-[0_0_16px_rgba(0,82,255,0.4)]" />
+          </div>
+          <span className="text-2xl font-extrabold tracking-tight text-[#0b1e33] uppercase font-sans">
+            Nerva
+          </span>
+          <button
+            onClick={onClose}
+            aria-label="Close menu"
+            className="ml-auto p-2 -mr-2 rounded-xl text-slate-400 hover:text-[#0b1e33] hover:bg-white/60 transition-colors lg:hidden"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
-        <span className="text-2xl font-extrabold tracking-tight text-[#0b1e33] uppercase font-sans">
-          Nerva
-        </span>
-      </div>
 
-      {/* NAVIGATION ITEMS */}
-      <nav className="flex-1 space-y-1.5 px-3.5">
-        {items.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + '/');
-          const IconComponent = item.icon;
+        {/* NAVIGATION ITEMS */}
+        <nav className="flex-1 space-y-1.5 px-3.5 overflow-y-auto">
+          {items.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(item.href + '/');
+            const IconComponent = item.icon;
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`
-                group relative flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[11px] font-mono font-bold uppercase tracking-wider transition-all duration-200 active:scale-[0.98]
-                ${active
-                  ? 'bg-white/95 text-[#0052ff] shadow-[0_8px_20px_-6px_rgba(0,82,255,0.12),inset_0_1px_2px_0_rgba(255,255,255,1)] border border-slate-200/50'
-                  : 'text-slate-500 hover:text-[#0b1e33] hover:bg-white/40 border border-transparent'
-                }
-              `}
-            >
-              {/* Active Marker Line */}
-              {active && (
-                <span className="absolute left-0 top-1/3 bottom-1/3 w-1 bg-[#0052ff] rounded-r-full" />
-              )}
-              
-              {/* Responsive, lightweight inline SVG */}
-              <IconComponent className={`
-                w-[18px] h-[18px] transition-colors duration-200
-                ${active ? 'text-[#0052ff]' : 'text-slate-400 group-hover:text-slate-600'}
-              `} />
-              
-              <span className="leading-none">{item.label}</span>
-            </Link>
-          );
-        })}
-      </nav>
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`
+                  group relative flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[11px] font-mono font-bold uppercase tracking-wider transition-all duration-200 active:scale-[0.98]
+                  ${active
+                    ? 'bg-white/95 text-[#0052ff] shadow-[0_8px_20px_-6px_rgba(0,82,255,0.12),inset_0_1px_2px_0_rgba(255,255,255,1)] border border-slate-200/50'
+                    : 'text-slate-500 hover:text-[#0b1e33] hover:bg-white/40 border border-transparent'
+                  }
+                `}
+              >
+                {/* Active Marker Line */}
+                {active && (
+                  <span className="absolute left-0 top-1/3 bottom-1/3 w-1 bg-[#0052ff] rounded-r-full" />
+                )}
 
-      {/* FOOTER USER STATUS CARD */}
-      <div className="px-4 mt-auto">
-        <div className="
-          p-4 
-          bg-white/80 
-          backdrop-blur-md 
-          border border-white/80 
-          rounded-3xl 
-          shadow-[0_12px_24px_-8px_rgba(11,30,51,0.04),inset_0_2px_4px_0_rgba(255,255,255,0.6)]
-        ">
-          <p className="text-[9px] font-mono font-bold text-slate-400 tracking-wider uppercase mb-3">
-            Active Session
-          </p>
-          <div className="flex items-center gap-2.5">
-            <div className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+                {/* Responsive, lightweight inline SVG */}
+                <IconComponent className={`
+                  w-[18px] h-[18px] transition-colors duration-200
+                  ${active ? 'text-[#0052ff]' : 'text-slate-400 group-hover:text-slate-600'}
+                `} />
+
+                <span className="leading-none">{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* FOOTER USER STATUS CARD */}
+        <div className="px-4 mt-auto">
+          <div className="
+            p-4
+            bg-white/80
+            backdrop-blur-md
+            border border-white/80
+            rounded-3xl
+            shadow-[0_12px_24px_-8px_rgba(11,30,51,0.04),inset_0_2px_4px_0_rgba(255,255,255,0.6)]
+          ">
+            <p className="text-[9px] font-mono font-bold text-slate-400 tracking-wider uppercase mb-3">
+              Active Session
+            </p>
+            <div className="flex items-center gap-2.5">
+              <div className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+              </div>
+              <span className="text-xs font-bold text-[#0b1e33] tracking-tight truncate max-w-[110px]">
+                {user?.role ?? 'GUEST'}
+              </span>
+              <span className="ml-auto text-[9px] font-mono font-bold text-slate-400/80 bg-slate-100/80 px-1.5 py-0.5 rounded-md border border-slate-200/30">
+                v2.8.1
+              </span>
             </div>
-            <span className="text-xs font-bold text-[#0b1e33] tracking-tight truncate max-w-[110px]">
-              {user?.role ?? 'GUEST'}
-            </span>
-            <span className="ml-auto text-[9px] font-mono font-bold text-slate-400/80 bg-slate-100/80 px-1.5 py-0.5 rounded-md border border-slate-200/30">
-              v2.8.1
-            </span>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
