@@ -486,10 +486,19 @@ export const whatsapp = {
       retries: 2,
     }),
   
-  // Public status (no auth required)
+  // Aggregate operational status for the current tenant's session.
+  // NOTE: this endpoint used to be reachable with no auth at all and leaked
+  // raw per-tenant session data (tenantId/messageCount/lastActivity) for up
+  // to 10 tenants to anyone. The backend now requires a valid bearer token
+  // (see services/whatsapp-engine/src/routes/whatsapp-routes.ts) and only
+  // returns aggregate counts, not a per-tenant `recentSessions` breakdown —
+  // this call site was dead code (no caller in the app) so nothing else
+  // needed updating, but the shape below now matches what the server
+  // actually returns instead of the old leaked shape.
   getPublicStatus: () =>
     request<{
       success: boolean;
+      service: string;
       status: string;
       stats: {
         total: number;
@@ -497,16 +506,10 @@ export const whatsapp = {
         authenticating: number;
         failed: number;
         disconnected: number;
+        timeout: number;
       };
-      recentSessions: Array<{
-        tenantId: string;
-        status: string;
-        messageCount: number;
-        lastActivity: string;
-      }>;
       timestamp: string;
     }>('/api/v1/whatsapp/public-status', {
-      auth: false,
       timeout: 5000,
       retries: 3,
     }),

@@ -182,6 +182,18 @@ export default function PosPage() {
     setCart(prev => prev.map(c => c.sku === sku ? { ...c, qty } : c));
   };
 
+  // Mirrors the addToCart stock guard for the desktop sidebar's own "+"
+  // stepper (a separate rendering of the cart from CartModal, same bug
+  // surface): block the increment once qty reaches the item's stock.
+  const incrementCartItem = (item: CartItem) => {
+    if (item.qty >= item.stock) {
+      setStockNotice(`Only ${item.stock} of ${item.name} in stock.`);
+      setTimeout(() => setStockNotice(null), 2500);
+      return;
+    }
+    updateQty(item.sku, item.qty + 1);
+  };
+
   const removeItem = (sku: string) => {
     setCart(prev => prev.filter(c => c.sku !== sku));
   };
@@ -466,8 +478,9 @@ export default function PosPage() {
                       </button>
                       <span className="w-6 text-center text-sm text-zinc-800 font-extrabold">{item.qty}</span>
                       <button
-                        onClick={() => updateQty(item.sku, item.qty + 1)}
-                        className="w-6 h-6 rounded-md bg-white text-zinc-600 hover:text-[#0052ff] border border-zinc-200/30 shadow-sm text-sm font-bold flex items-center justify-center transition-colors"
+                        onClick={() => incrementCartItem(item)}
+                        disabled={item.qty >= item.stock}
+                        className="w-6 h-6 rounded-md bg-white text-zinc-600 hover:text-[#0052ff] border border-zinc-200/30 shadow-sm text-sm font-bold flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-zinc-600"
                       >
                         +
                       </button>

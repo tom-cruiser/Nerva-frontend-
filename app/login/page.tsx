@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, status } = useAuth();
+  const { login, status, user } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -15,10 +15,26 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Bounce already-authenticated users.
+  // A superadmin has no tenant_id (see PLATFORM_SENTINEL_TENANT_ID on the
+  // backend) — /admin is a tenant dashboard and would show a broken/empty
+  // state for them. Route them straight to the platform console instead.
+  const postLoginPath = (permissions: string[]) =>
+    permissions.includes('superadmin:access') ||
+    permissions.includes('platform:support') ||
+    permissions.includes('platform:billing')
+      ? '/platform'
+      : '/admin';
+
+  // Bounce already-authenticated users — and this is ALSO what fires the
+  // redirect right after a successful login below, since `login()` only
+  // triggers Supabase's onAuthStateChange (which updates `user`/`status`
+  // asynchronously); it doesn't return the user itself, so redirecting from
+  // here (once the hook's state actually reflects the new session) is more
+  // reliable than trying to redirect immediately inside handleSubmit.
   useEffect(() => {
-    if (status === 'authenticated') router.replace('/admin');
-  }, [status, router]);
+    if (status === 'authenticated') router.replace(postLoginPath(user?.permissions ?? []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, user, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +42,8 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email.trim(), password);
-      router.replace('/admin');
+      // No router.replace() here — the useEffect above handles it once
+      // `status`/`user` actually update.
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Sign in failed.';
       setError(

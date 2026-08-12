@@ -1,8 +1,45 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/app/context/AuthContext';
+
+const NAV_ITEMS = [
+  { href: '/platform',              label: 'Overview' },
+  { href: '/platform/tenants',      label: 'Tenants' },
+  { href: '/platform/subscriptions',label: 'Subscriptions' },
+  { href: '/platform/ops',          label: 'Platform Ops' },
+  { href: '/platform/settings',     label: 'Settings' },
+];
+
+function PlatformNav() {
+  const pathname = usePathname();
+  return (
+    <nav className="max-w-[1400px] mx-auto px-8 h-11 flex items-center gap-1 border-b border-white/5">
+      {NAV_ITEMS.map((item) => {
+        // Exact match for the root overview page; prefix match for the rest,
+        // so e.g. /platform/tenants/[id] still highlights "Tenants".
+        const active = item.href === '/platform'
+          ? pathname === '/platform'
+          : pathname === item.href || pathname.startsWith(`${item.href}/`);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-150 ${
+              active
+                ? 'bg-white/8 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-white/4'
+            }`}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 export default function PlatformLayout({ children }: { children: React.ReactNode }) {
   const { user, status } = useAuth();
@@ -69,12 +106,12 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
   return (
     <div className="min-h-screen bg-[#0C0C0E] text-zinc-100 flex flex-col">
       <header className="
-        sticky top-0 z-40 h-16
-        bg-[#0C0C0E]/70 backdrop-blur-3xl 
-        border-b border-white/5 
+        sticky top-0 z-40
+        bg-[#0C0C0E]/70 backdrop-blur-3xl
+        border-b border-white/5
         shadow-[0_4px_20px_rgba(0,0,0,0.4)]
       ">
-        <div className="max-w-[1400px] mx-auto px-8 h-full flex items-center justify-between">
+        <div className="max-w-[1400px] mx-auto px-8 h-16 flex items-center justify-between">
           
           {/* Brand/Console indicators */}
           <div className="flex items-center gap-3.5">
@@ -116,6 +153,7 @@ export default function PlatformLayout({ children }: { children: React.ReactNode
           </div>
           
         </div>
+        <PlatformNav />
       </header>
       <main className="flex-1 bg-[#0C0C0E]">{children}</main>
     </div>

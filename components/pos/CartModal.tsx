@@ -9,6 +9,7 @@ interface CartItem {
   name: string;
   price: number;
   qty: number;
+  stock: number;
 }
 
 interface CartModalProps {
@@ -46,7 +47,21 @@ export default function CartModal({
   isCharged,
   error,
 }: CartModalProps) {
+  const [qtyNotice, setQtyNotice] = React.useState<string | null>(null);
+
   if (!isOpen) return null;
+
+  // Mirrors the stock guard in addToCart (app/(app)/pos/page.tsx): block the
+  // increment once qty has reached the item's known stock, rather than
+  // letting the stepper push the cart past what's actually available.
+  const handleIncrement = (item: CartItem) => {
+    if (item.qty >= item.stock) {
+      setQtyNotice(`Only ${item.stock} of ${item.name} in stock.`);
+      setTimeout(() => setQtyNotice(null), 2500);
+      return;
+    }
+    onUpdateQty(item.sku, item.qty + 1);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm">
@@ -83,6 +98,14 @@ export default function CartModal({
             </button>
           </div>
         </div>
+
+        {qtyNotice && (
+          <div className="px-4 sm:px-6 pt-3">
+            <div className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 rounded-lg px-3 py-2">
+              {qtyNotice}
+            </div>
+          </div>
+        )}
 
         {/* Cart Items */}
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3">
@@ -121,8 +144,9 @@ export default function CartModal({
                     </button>
                     <span className="w-8 text-center text-sm font-extrabold text-zinc-800">{item.qty}</span>
                     <button
-                      onClick={() => onUpdateQty(item.sku, item.qty + 1)}
-                      className="w-7 h-7 rounded-md hover:bg-zinc-100 text-zinc-600 hover:text-[#0052ff] transition-colors flex items-center justify-center text-sm font-bold"
+                      onClick={() => handleIncrement(item)}
+                      disabled={item.qty >= item.stock}
+                      className="w-7 h-7 rounded-md hover:bg-zinc-100 text-zinc-600 hover:text-[#0052ff] transition-colors flex items-center justify-center text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                     >
                       +
                     </button>

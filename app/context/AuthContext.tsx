@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { tokenStore } from '../../lib/token-store';
+import { clearAllOfflineData } from '../../lib/offline-cleardown';
 import { ROLE_PERMISSIONS } from '../../lib/types';
 import type { AuthUser, Permission, UserRole } from '../../lib/types';
 
@@ -66,13 +67,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const applySession = useCallback((session: Session | null) => {
     if (session?.user) {
       const mapped = mapUser(session.user);
+      const previousUserId = tokenStore.lastUserId;
+      const isDifferentUser = previousUserId !== null && previousUserId !== mapped.id;
+
+      if (isDifferentUser) {
+        // A different account just authenticated on this device without an
+        // explicit logout() call in between (e.g. User A never signed out,
+        // User B just typed their own credentials into the login form —
+        // Supabase swaps the session and this fires directly). Nothing
+        // cached for the previous user — carts, the offline pending-sync
+        // queue, cached product/customer catalogs in IndexedDB, or plain
+        // localStorage/sessionStorage — has any business surviving into
+        // this session. logout() below also calls this on the explicit
+        // sign-out path; this call is what covers the silent-switch case.
+        void clearAllOfflineData();
+      }
+
       setUser(mapped);
       setStatus('authenticated');
-      // Keep the WatermelonDB / tenancy isolation boundary aligned with the tenant.
+
+      // Keep the WatermelonDB / tenancy isolation boundary aligned with the
+      // tenant. Always derive tenantId fresh from *this* session's claims.
+      // Only fall back to a previously-cached tenantId when it was cached
+      // for this SAME user (e.g. logout, then that same user logs back in
+      // and the prefilled value is still theirs) — never let a different
+      // user who happens to have no tenantId claim silently inherit a
+      // stale tenantId left behind by a previous session on this device.
       if (mapped.tenantId) {
         tokenStore.tenantId = mapped.tenantId;
         tokenStore.organizationId = mapped.tenantId;
+      } else if (isDifferentUser) {
+        tokenStore.tenantId = null;
+        tokenStore.organizationId = null;
       }
+      tokenStore.lastUserId = mapped.id;
     } else {
       setUser(null);
       setStatus('anonymous');
@@ -109,6 +137,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     tokenStore.clear();
+    // Wipe carts/pending-sync-queue/cached catalogs (IndexedDB), any stray
+    // localStorage key, and all of sessionStorage immediately on logout —
+    // don't wait for the next login to discover a user switch happened.
+    await clearAllOfflineData();
     // onAuthStateChange will flip status to 'anonymous'.
   }, []);
 

@@ -11,6 +11,7 @@ const REFRESH_KEY = 'nerva.refreshToken';
 const USER_KEY = 'nerva.user';
 const TENANT_KEY = 'nerva.tenantId';
 const ORG_KEY = 'nerva.organizationId';
+const LAST_USER_KEY = 'nerva.lastUserId';
 
 const isBrowser = typeof window !== 'undefined';
 
@@ -51,6 +52,21 @@ export const tokenStore = {
     if (id) localStorage.setItem(ORG_KEY, id);
     else localStorage.removeItem(ORG_KEY);
   },
+  /**
+   * Which user the cached tenantId/organizationId above belong to. Survives
+   * logout on purpose (mirrors tenantId) so AuthContext#applySession can tell
+   * "this is the same user logging back in, the cached tenantId is still
+   * theirs" apart from "a different user just authenticated on this shared
+   * device" — the latter must never inherit the former's cached tenant.
+   */
+  get lastUserId(): string | null {
+    return isBrowser ? localStorage.getItem(LAST_USER_KEY) : null;
+  },
+  set lastUserId(id: string | null) {
+    if (!isBrowser) return;
+    if (id) localStorage.setItem(LAST_USER_KEY, id);
+    else localStorage.removeItem(LAST_USER_KEY);
+  },
   getUser(): AuthUser | null {
     if (!isBrowser) return null;
     const raw = localStorage.getItem(USER_KEY);
@@ -69,6 +85,7 @@ export const tokenStore = {
     localStorage.setItem(TENANT_KEY, session.user.tenantId);
     // Keep the WatermelonDB isolation boundary aligned with the tenant.
     localStorage.setItem(ORG_KEY, session.user.tenantId);
+    localStorage.setItem(LAST_USER_KEY, session.user.id);
   },
   setAccessToken(token: string): void {
     if (!isBrowser) return;
@@ -79,6 +96,9 @@ export const tokenStore = {
     localStorage.removeItem(ACCESS_KEY);
     localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(USER_KEY);
-    // Keep tenantId so the login form can prefill it next time.
+    // Keep tenantId/organizationId/lastUserId so the login form can prefill
+    // it next time this same user signs back in (see
+    // AuthContext#applySession, which checks lastUserId before ever reusing
+    // a cached tenantId for a session).
   },
 };
