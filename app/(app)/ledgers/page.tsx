@@ -5,6 +5,7 @@ import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { ledger } from '@/lib/endpoints';
 import { ApiError } from '@/lib/api';
+import RequireRole from '@/components/RequireRole';
 import PaymentFormModal from '@/components/ledgers/PaymentFormModal';
 import CustomerDetailModal from '@/components/ledgers/CustomerDetailModal';
 import AddCustomerModal from '@/components/ledgers/AddCustomerModal';
@@ -303,6 +304,7 @@ export default function LedgersPage() {
   }
 
   return (
+    <RequireRole requiredPermission="ledger:read">
     <div className="p-7 space-y-6 max-w-[1400px] bg-zinc-50/50 min-h-[calc(100vh-64px)] overflow-y-auto">
 
       {/* Header */}
@@ -623,5 +625,6 @@ export default function LedgersPage() {
         customer={editingCustomer}
       />
     </div>
+    </RequireRole>
   );
 }

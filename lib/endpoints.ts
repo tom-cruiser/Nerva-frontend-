@@ -1,8 +1,6 @@
 'use client';
 import { request, uuid, ApiError } from './api';
-import { tokenStore } from './token-store';
 import type {
-  LoginResponse,
   Product,
   LedgerBalanceResponse,
   MomoProvider,
@@ -20,6 +18,7 @@ import type {
   CloseShiftResponse,
   ShiftHistoryEntry,
   StaffPerformanceResponse,
+  BillingTier,
 } from './types';
 
 /**
@@ -44,18 +43,13 @@ import type {
  */
 
 // ── auth-tenant ─────────────────────────────────────────────────────
+// NOTE: this used to also export login/logout/logoutAll, backed by a custom
+// RS256 auth path on the backend (services/auth-tenant's old /login,
+// /refresh, /logout, /logout-all). That path was removed as dead code — it
+// minted tokens incompatible with the Supabase-JWKS verification every
+// service actually uses. Real sign-in/sign-out has always gone through
+// Supabase directly (see app/context/AuthContext.tsx's login()/logout()).
 export const auth = {
-  /** Login requires the tenant id in the X-Tenant-Id header. */
-  login(tenantId: string, email: string, password: string): Promise<LoginResponse> {
-    return request<LoginResponse>('/api/v1/auth/login', {
-      method: 'POST',
-      auth: false,
-      skipRefresh: true,
-      headers: { 'X-Tenant-Id': tenantId },
-      body: { email, password },
-    });
-  },
-
   /**
    * Register a new tenant/organization and its owner account.
    */
@@ -65,24 +59,6 @@ export const auth = {
       auth: false,
       skipRefresh: true,
       body: input,
-    });
-  },
-
-  logout(): Promise<{ message: string }> {
-    const refreshToken = tokenStore.refreshToken ?? undefined;
-    return request<{ message: string }>('/api/v1/auth/logout', {
-      method: 'POST',
-      skipRefresh: true,
-      body: { refreshToken },
-    });
-  },
-
-  logoutAll(): Promise<{ message: string }> {
-    const refreshToken = tokenStore.refreshToken ?? undefined;
-    return request<{ message: string }>('/api/v1/auth/logout-all', {
-      method: 'POST',
-      skipRefresh: true,
-      body: { refreshToken },
     });
   },
 };
@@ -681,6 +657,44 @@ export const sync = {
   },
 };
 
+// ── sales analytics (sales-sync's analytics-router.ts) ───────────────
+export interface SalesReport {
+  date: string;
+  period: 'daily' | 'weekly' | 'monthly';
+  totalSales: number;
+  totalOrders: number;
+  averageOrderValue: number;
+  topSellingProducts: Array<{ sku: string; name: string; quantity: number; revenue: number }>;
+  revenueByCategory: Array<{ category: string; revenue: number }>;
+  paymentMethods: Array<{ method: string; amount: number; count: number }>;
+  hourlySales: Array<{ hour: string; orders: number; revenue: number }>;
+  recentSales: Array<{
+    id: string;
+    workerTag: string;
+    itemCount: number;
+    totalAmount: number;
+    paymentMethod: string;
+    paymentStatus: string;
+    saleTimestamp: string;
+  }>;
+  timestamp: string;
+}
+
+export const analytics = {
+  getSalesReport(date: string, period: 'daily' | 'weekly' | 'monthly' = 'daily'): Promise<SalesReport> {
+    return request<SalesReport>('/api/v1/sync/analytics/sales-report', {
+      query: { date, period },
+      auth: true,
+    });
+  },
+
+  getRegisters(): Promise<{ active: number; total: number; timestamp: string }> {
+    return request('/api/v1/sync/analytics/registers', {
+      auth: true,
+    });
+  },
+};
+
 // ── seat provisioning ────────────────────────────────────
 export const seats = {
   list(): Promise<SeatListResponse> {
@@ -709,13 +723,25 @@ export const seats = {
     );
   },
 
-  update(userId: string, data: { role?: string; is_active?: boolean }): Promise<Seat> {
+  update(userId: string, data: { role?: string; is_active?: boolean; extra_permissions?: string[] }): Promise<Seat> {
     return request<Seat>(`/api/v1/auth/seats/${encodeURIComponent(userId)}`, {
       method: 'PATCH',
       body: data,
       auth: true,
       mutationId: uuid(),
     });
+  },
+
+  resetPassword(userId: string, password: string): Promise<{ success: boolean; message: string }> {
+    return request<{ success: boolean; message: string }>(
+      `/api/v1/auth/seats/${encodeURIComponent(userId)}/reset-password`,
+      {
+        method: 'POST',
+        body: { password },
+        auth: true,
+        mutationId: uuid(),
+      }
+    );
   },
 };
 
@@ -763,6 +789,66 @@ export const shifts = {
   },
 };
 
+// ── subscription (tenant-facing plan/billing view + upgrade requests) ────
+// Backed by services/auth-tenant's subscription-handler.ts — OWNER-only on
+// the backend (billing has no dedicated permission type, same territory as
+// seats management). Distinct from the Super Admin's lib/superadmin-api.ts
+// (which manages every tenant's subscription; this is a tenant's own view of
+// its own plan).
+export interface TenantSubscriptionView {
+  planCode:            BillingTier;
+  status:              'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
+  billingCycle:        'monthly' | 'semestral' | 'annual';
+  trialEndsAt:         string | null;
+  currentPeriodStart:  string;
+  currentPeriodEnd:    string | null;
+  cancelAtPeriodEnd:   boolean;
+  /** Days left in the trial (if TRIALING) or current paid period, else null. */
+  daysRemaining:       number | null;
+}
+
+export interface TenantSubscriptionPlan {
+  code:                      BillingTier;
+  name:                      string;
+  price_cents:               number;
+  max_cashiers:              number | null;
+  max_locations:             number | null;
+  max_monthly_transactions:  number | null;
+}
+
+export interface PendingUpgradeRequest {
+  id:           string;
+  planCode:     BillingTier;
+  billingCycle: 'monthly' | 'semestral' | 'annual';
+  createdAt:    string;
+}
+
+export interface TenantSubscriptionResponse {
+  subscription:   TenantSubscriptionView;
+  plan:           TenantSubscriptionPlan | null;
+  pendingRequest: PendingUpgradeRequest | null;
+  timestamp:      string;
+}
+
+export const subscription = {
+  get(): Promise<TenantSubscriptionResponse> {
+    return request<TenantSubscriptionResponse>('/api/v1/auth/subscription', {
+      auth: true,
+    });
+  },
+
+  request(planCode: BillingTier, billingCycle: 'monthly' | 'semestral' | 'annual'): Promise<{
+    id: string; planCode: BillingTier; billingCycle: string; status: 'PENDING'; createdAt: string;
+  }> {
+    return request('/api/v1/auth/subscription/request', {
+      method: 'POST',
+      body: { plan_code: planCode, billing_cycle: billingCycle },
+      auth: true,
+      mutationId: uuid(),
+    });
+  },
+};
+
 // ── Export all endpoints as a single object ─────────────────────────
 export const api = {
   auth,
@@ -771,6 +857,7 @@ export const api = {
   sync,
   seats,
   shifts,
+  subscription,
 };
 
 export default api;

@@ -10,6 +10,9 @@ import { useAuth } from '@/app/context/AuthContext';
 import { inventory, sync } from '@/lib/endpoints';
 import { ApiError, uuid } from '@/lib/api';
 import { getDeviceId, nowTimestamptz } from '@/lib/tenancy';
+import { useTenantLock } from '@/lib/tenant-status';
+import { enqueuePendingSale, usePendingSalesCount } from '@/lib/pending-sales-queue';
+import { flushPendingSales } from '@/lib/sync-retry';
 import type { Product, SyncChange, SyncResponse } from '@/lib/types';
 
 const SEARCH_ICON = (
@@ -39,6 +42,8 @@ function isSyncResponse(value: unknown): value is SyncResponse {
 
 export default function PosPage() {
   const { tenantId } = useAuth();
+  const { locked: isTenantLocked } = useTenantLock();
+  const pendingSalesCount = usePendingSalesCount();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -123,6 +128,15 @@ export default function PosPage() {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+
+  // Retry any sale batches queued from a previous network failure (see
+  // lib/pending-sales-queue.ts) whenever a cashier lands on this page — a
+  // cheap no-op if the queue is empty. components/TenantStatusBanner.tsx
+  // also retries on the `online` event app-wide; this covers "opened POS
+  // again" specifically.
+  useEffect(() => {
+    void flushPendingSales();
+  }, []);
 
   // ─── Filter products ─────────────────────────────────────────────────────────
   const filteredProducts = useMemo(() => {
@@ -221,6 +235,11 @@ export default function PosPage() {
       return;
     }
 
+    if (isTenantLocked) {
+      setChargeError('Store is suspended — new sales are blocked until it is reactivated.');
+      return;
+    }
+
     setIsCharging(true);
     setChargeError(null);
 
@@ -305,10 +324,32 @@ export default function PosPage() {
     } catch (err) {
       console.error('Payment failed:', err);
       if (err instanceof ApiError) {
-        if (err.isForbidden) {
+        if (err.isLocked) {
+          setChargeError('Store is suspended — new sales are blocked until it is reactivated.');
+        } else if (err.isForbidden) {
           setChargeError("You don't have permission to record sales.");
         } else if (err.status === 409) {
           setChargeError('This sale is already being processed. Please wait a moment.');
+        } else if (err.isServiceUnavailable || err.isUnreachable) {
+          // Network/service is down, not a rejection of the sale itself —
+          // queue it for automatic retry (see lib/pending-sales-queue.ts)
+          // rather than making the cashier lose the transaction.
+          enqueuePendingSale(
+            { tenant_id: tenantId, device_id: getDeviceId(), changes: [change] },
+            change.id,
+          );
+          setIsCharged(true);
+          setProducts(prev =>
+            prev.map(p => {
+              const sold = cart.find(c => c.sku === p.product_sku);
+              return sold ? { ...p, stock_quantity: Math.max(0, p.stock_quantity - sold.qty) } : p;
+            }),
+          );
+          setTimeout(() => {
+            setCart([]);
+            setIsCharged(false);
+            setIsCartOpen(false);
+          }, 2000);
         } else {
           setChargeError(err.message);
         }
@@ -435,6 +476,9 @@ export default function PosPage() {
                 {totalItems > 0 && (
                   <Badge color="blue" className="ml-1">{totalItems}</Badge>
                 )}
+                {pendingSalesCount > 0 && (
+                  <Badge color="amber" className="ml-1">{pendingSalesCount} pending sync</Badge>
+                )}
               </h2>
               {cart.length > 0 && (
                 <button
@@ -536,9 +580,9 @@ export default function PosPage() {
                   size="lg"
                   loading={isCharging}
                   onClick={handleCharge}
-                  disabled={isCharged}
+                  disabled={isCharged || isTenantLocked}
                 >
-                  {isCharging ? 'Processing…' : isCharged ? '✓ Paid' : `Charge XAF ${total.toLocaleString()}`}
+                  {isCharging ? 'Processing…' : isCharged ? '✓ Paid' : isTenantLocked ? 'Store suspended' : `Charge XAF ${total.toLocaleString()}`}
                 </Button>
 
                 {isCharged && (

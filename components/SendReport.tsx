@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { request } from '@/lib/api';
+import { analytics } from '@/lib/endpoints';
 
 interface SendReportProps {
   onSendComplete?: (result: any) => void;
@@ -16,42 +17,7 @@ export default function SendReport({ onSendComplete }: SendReportProps) {
   const [isSending, setIsSending] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Mock report data - In real app, this would come from your POS
-  const generateMockReportData = () => {
-    return {
-      totalSales: 12500.50,
-      totalOrders: 87,
-      averageOrderValue: 143.68,
-      topSellingProducts: [
-        { name: 'Product A', quantity: 45, revenue: 4500 },
-        { name: 'Product B', quantity: 32, revenue: 3200 },
-        { name: 'Product C', quantity: 28, revenue: 2800 },
-        { name: 'Product D', quantity: 20, revenue: 2000 },
-      ],
-      revenueByCategory: [
-        { category: 'Electronics', revenue: 5500 },
-        { category: 'Clothing', revenue: 3500 },
-        { category: 'Food', revenue: 2500 },
-        { category: 'Accessories', revenue: 1000 },
-      ],
-      paymentMethods: [
-        { method: 'Cash', amount: 5000, count: 35 },
-        { method: 'Card', amount: 4500, count: 30 },
-        { method: 'Mobile Money', amount: 3000, count: 22 },
-      ],
-      hourlySales: [
-        { hour: '09:00', orders: 8, revenue: 1200 },
-        { hour: '10:00', orders: 12, revenue: 1800 },
-        { hour: '11:00', orders: 15, revenue: 2200 },
-        { hour: '12:00', orders: 10, revenue: 1500 },
-        { hour: '13:00', orders: 7, revenue: 1050 },
-        { hour: '14:00', orders: 9, revenue: 1350 },
-        { hour: '15:00', orders: 11, revenue: 1650 },
-        { hour: '16:00', orders: 15, revenue: 2250 },
-      ]
-    };
-  };
+  const [dataWarning, setDataWarning] = useState<string | null>(null);
 
   const handleSendReport = async () => {
     const recipientList = recipients
@@ -67,19 +33,49 @@ export default function SendReport({ onSendComplete }: SendReportProps) {
     setIsSending(true);
     setError(null);
     setResult(null);
+    setDataWarning(null);
+
+    // Real sales figures for the selected date/period — replaces the old
+    // fabricated placeholder data (see lib/endpoints.ts's `analytics` client,
+    // backed by services/sales-sync's analytics-router.ts). On failure, send
+    // a zeroed summary rather than inventing numbers/product names — a
+    // partial-but-honest report beats a plausible-looking fake one.
+    let summary;
+    try {
+      const report = await analytics.getSalesReport(date, period);
+      summary = {
+        totalSales: report.totalSales,
+        totalOrders: report.totalOrders,
+        averageOrderValue: report.averageOrderValue,
+        topSellingProducts: report.topSellingProducts.map(p => ({
+          name: p.name, quantity: p.quantity, revenue: p.revenue,
+        })),
+        revenueByCategory: report.revenueByCategory,
+        paymentMethods: report.paymentMethods,
+        hourlySales: report.hourlySales,
+      };
+    } catch (err: any) {
+      setDataWarning(
+        `Could not load real sales figures (${err.message || 'unknown error'}) — sending a zeroed report instead of guessed numbers.`,
+      );
+      summary = {
+        totalSales: 0, totalOrders: 0, averageOrderValue: 0,
+        topSellingProducts: [], revenueByCategory: [], paymentMethods: [], hourlySales: [],
+      };
+    }
 
     try {
       const reportData = {
         date,
         period,
-        summary: generateMockReportData(),
+        summary,
         recipients: recipientList,
         options: {
           sendPDF: true,
           sendMessage: true,
           pdfOptions: {
-            includeCharts: true,
-            includeBreakdown: true
+            includeCharts: summary.hourlySales.length > 0,
+            includeBreakdown: summary.topSellingProducts.length > 0 || summary.revenueByCategory.length > 0,
           }
         }
       };
@@ -91,7 +87,7 @@ export default function SendReport({ onSendComplete }: SendReportProps) {
       });
 
       setResult(response);
-      
+
       if (onSendComplete) {
         onSendComplete(response);
       }
@@ -168,6 +164,12 @@ export default function SendReport({ onSendComplete }: SendReportProps) {
             </span>
           </div>
         </div>
+
+        {dataWarning && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-md text-amber-700 text-sm">
+            ⚠️ {dataWarning}
+          </div>
+        )}
 
         {error && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">

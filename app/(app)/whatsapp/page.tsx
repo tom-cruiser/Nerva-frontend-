@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { whatsapp } from '@/lib/api';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
+import RequireRole from '@/components/RequireRole';
 import BulkSend from '@/components/BulkSend';
 import SendReport from '@/components/SendReport';
 
@@ -200,6 +201,7 @@ export default function WhatsappPage() {
   };
 
   return (
+    <RequireRole requiredPermission="whatsapp:send">
     <div className="p-7 space-y-6 max-w-[1400px] bg-zinc-50/50 min-h-screen text-[#0A0A0A]">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -233,7 +235,7 @@ export default function WhatsappPage() {
                   setShowBulkSend(false);
                   setShowReportSend(!showReportSend);
                 }}
-                variant={showReportSend ? 'default' : 'outline'}
+                variant={showReportSend ? 'primary' : 'outline'}
                 className="text-sm"
               >
                 {showReportSend ? '📩 Messages' : '📊 Reports'}
@@ -243,7 +245,7 @@ export default function WhatsappPage() {
                   setShowReportSend(false);
                   setShowBulkSend(!showBulkSend);
                 }}
-                variant={showBulkSend ? 'default' : 'outline'}
+                variant={showBulkSend ? 'primary' : 'outline'}
                 className="text-sm"
               >
                 {showBulkSend ? '📩 Single Message' : '📤 Bulk Send'}
@@ -502,5 +504,6 @@ export default function WhatsappPage() {
         </Card>
       )}
     </div>
+    </RequireRole>
   );
 }

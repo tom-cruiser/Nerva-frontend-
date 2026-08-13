@@ -9,7 +9,10 @@ export type UserRole = 'OWNER' | 'MANAGER' | 'STAFF' | 'VIEWER';
 export type Permission =
   | 'inventory:read' | 'inventory:create' | 'inventory:update' | 'inventory:delete'
   | 'sales:read' | 'sales:create' | 'sales:void'
-  | 'ledger:read' | 'ledger:credit' | 'ledger:payment'
+  // ledger:create/ledger:update were missing here even though the backend
+  // (packages/types/src/tenant-context.ts) has always had them and actively
+  // gates POST/PATCH /customers with them — added to close the drift.
+  | 'ledger:read' | 'ledger:create' | 'ledger:update' | 'ledger:credit' | 'ledger:payment'
   | 'users:read' | 'users:create' | 'users:update' | 'users:delete'
   | 'reports:read'
   | 'whatsapp:send'
@@ -20,7 +23,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   OWNER: [
     'inventory:read', 'inventory:create', 'inventory:update', 'inventory:delete',
     'sales:read', 'sales:create', 'sales:void',
-    'ledger:read', 'ledger:credit', 'ledger:payment',
+    'ledger:read', 'ledger:create', 'ledger:update', 'ledger:credit', 'ledger:payment',
     'users:read', 'users:create', 'users:update', 'users:delete',
     'reports:read', 'whatsapp:send',
     'shifts:read', 'shifts:manage',
@@ -28,16 +31,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   MANAGER: [
     'inventory:read', 'inventory:create', 'inventory:update',
     'sales:read', 'sales:create', 'sales:void',
-    'ledger:read', 'ledger:credit', 'ledger:payment',
+    'ledger:read', 'ledger:create', 'ledger:update', 'ledger:credit', 'ledger:payment',
     'users:read',
     'reports:read', 'whatsapp:send',
     'shifts:read', 'shifts:manage',
   ],
+  // Deliberately excludes 'ledger:read'/'reports:read' — cashiers must not
+  // see the customer debt book or profit/sales-report data (admin3.md).
+  // Mirrors packages/types/src/tenant-context.ts on the backend.
   STAFF: [
     'inventory:read',
     'sales:read', 'sales:create',
-    'ledger:read',
-    'reports:read',
     'shifts:read', 'shifts:manage',
   ],
   VIEWER: [
@@ -138,7 +142,62 @@ export interface Seat {
   is_active: boolean;
   created_at: string; // timestamptz
   updated_at: string; // timestamptz — LWW comparison key
+  /** NULL = plain role-derived defaults; non-null = this seat has an
+   *  individual permission override (see EXTRA_PERMISSION_GROUPS). */
+  permissions: Permission[] | null;
 }
+
+/**
+ * Permissions an Admin can individually grant a worker on top of their
+ * role's defaults, grouped into single toggleable bundles — mirrors
+ * GRANTABLE_EXTRA_PERMISSIONS in the backend's seats-handler.ts exactly
+ * (keep the two in sync). Deliberately excludes anything that could let a
+ * worker approach OWNER-level control (users:*, superadmin:*, platform:*).
+ */
+export interface ExtraPermissionGroup {
+  key: string;
+  label: string;
+  description: string;
+  permissions: Permission[];
+}
+
+export const EXTRA_PERMISSION_GROUPS: ExtraPermissionGroup[] = [
+  {
+    key: 'ledger',
+    label: 'Ledger access',
+    description: 'View the customer debt book and record credit/payments.',
+    permissions: ['ledger:read', 'ledger:create', 'ledger:update', 'ledger:credit', 'ledger:payment'],
+  },
+  {
+    key: 'reports',
+    label: 'Reports',
+    description: 'View sales/profit reports and WhatsApp report data.',
+    permissions: ['reports:read'],
+  },
+  {
+    key: 'inventory',
+    label: 'Inventory management',
+    description: 'Add, edit, and remove products (beyond read-only access).',
+    permissions: ['inventory:create', 'inventory:update', 'inventory:delete'],
+  },
+  {
+    key: 'void',
+    label: 'Void sales',
+    description: 'Cancel a completed sale.',
+    permissions: ['sales:void'],
+  },
+  {
+    key: 'whatsapp',
+    label: 'WhatsApp',
+    description: 'Send WhatsApp messages and reports to customers.',
+    permissions: ['whatsapp:send'],
+  },
+];
+
+/** Flat list of every permission any group can grant — used to validate/
+ *  filter a seat's current overrides down to "which groups are active". */
+export const ALL_GRANTABLE_EXTRA_PERMISSIONS: Permission[] =
+  EXTRA_PERMISSION_GROUPS.flatMap((g) => g.permissions);
 
 export interface SeatListResponse {
   seats: Seat[];
@@ -156,12 +215,22 @@ export interface CreateSeatRequest {
   worker_tag: string;
   /** timestamptz (ISO-8601) for Last-Write-Wins sync comparisons. */
   client_created_at: string;
+  /** Extra permissions beyond the role's defaults — see EXTRA_PERMISSION_GROUPS. */
+  extra_permissions?: Permission[];
 }
 
 // ── Error envelope (every service) ──────────────────────────────────
+// Mirrors packages/types/src/error.ts on the backend, plus 'TIMEOUT' — a
+// client-only synthesized code (lib/api.ts throws it locally on an
+// AbortController timeout; no service ever sends it over the wire).
 export type ErrorCode =
   | 'INVALID_REQUEST' | 'UNAUTHORIZED' | 'FORBIDDEN'
-  | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED' | 'INTERNAL_ERROR';
+  | 'NOT_FOUND' | 'CONFLICT' | 'RATE_LIMITED'
+  | 'SERVICE_UNAVAILABLE' | 'LOCKED' | 'INTERNAL_ERROR'
+  | 'FEATURE_NOT_ENABLED'
+  | 'CONNECT_FAILED' | 'STATUS_FAILED' | 'SEND_FAILED' | 'BULK_SEND_FAILED'
+  | 'LOGOUT_FAILED' | 'ADMIN_ERROR' | 'REPORT_FAILED' | 'SCHEDULE_FAILED'
+  | 'TIMEOUT';
 
 export interface ApiErrorPayload {
   error: string;

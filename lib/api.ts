@@ -2,6 +2,7 @@
 import { supabase } from './supabase';
 import { tokenStore } from './token-store';
 import type { ApiErrorPayload, ErrorCode } from './types';
+import { reportTenantLocked, reportTenantUnlocked } from './tenant-status';
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || 'http://localhost:8080';
@@ -48,6 +49,12 @@ export class ApiError extends Error {
 
   get isServiceUnavailable(): boolean {
     return this.status === 503 || this.isUnreachable;
+  }
+
+  /** 423 Locked — the tenant is suspended or (see PENDING_APPROVAL) not yet
+   *  approved. See lib/tenant-status.ts for the app-wide banner this drives. */
+  get isLocked(): boolean {
+    return this.status === 423;
   }
 }
 
@@ -143,10 +150,25 @@ async function parseError(res: Response): Promise<ApiError> {
   } else if (error.isUnauthorized) {
     error.message = `Authentication required. Please log in again.`;
   } else if (error.isForbidden) {
-    error.message = `You don't have permission to perform this action.`;
+    // Keep the friendly message as the headline, but don't throw away the
+    // backend's specific detail (requirePermission's ApiError carries
+    // details.requiredPermissions — see packages/middleware/src/
+    // require-permission.ts) — without it, every 403 in the console reads
+    // identically regardless of which permission was actually missing,
+    // which makes an otherwise-instant diagnosis (stale role, missing
+    // grant, wrong endpoint) impossible from the error alone.
+    const required = error.details['requiredPermissions'];
+    const requiredList = Array.isArray(required) ? required.join(', ') : undefined;
+    error.message = requiredList
+      ? `You don't have permission to perform this action. Missing: ${requiredList}.`
+      : `You don't have permission to perform this action.`;
   } else if (error.isNotFound) {
     error.message = `The requested resource was not found.`;
   }
+  // NOTE: isLocked (423) deliberately keeps the backend's own message as-is
+  // (unlike the branches above) — it's the only status where the message
+  // text itself matters to the UI, distinguishing "suspended" from "pending
+  // approval" (see tenant-context.ts's Errors.locked() calls).
   
   return error;
 }
@@ -268,6 +290,11 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
       // If response is OK, process it
       if (res.ok) {
+        // Any successful call from ANY page clears a stale lock — this is
+        // what makes the "Store Suspended" banner auto-resolve once a
+        // superadmin unblocks the tenant, with no manual "check again" step.
+        reportTenantUnlocked();
+
         if (res.status === 204 || res.headers.get('content-length') === '0') {
           return undefined as T;
         }
@@ -291,6 +318,9 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
       // Handle non-OK responses
       const error = await parseError(res);
+      if (error.isLocked) {
+        reportTenantLocked({ message: error.message, status: error.details['status'] as string | undefined });
+      }
       throw error;
 
     } catch (error) {
@@ -515,36 +545,13 @@ export const whatsapp = {
     }),
 };
 
-/** Auth API */
-export const auth = {
-  login: (email: string, password: string) =>
-    request<LoginResponse>('/api/v1/auth/login', {
-      method: 'POST',
-      body: { email, password },
-      retries: 2,
-    }),
-  
-  register: (data: RegisterRequest) =>
-    request<RegisterResponse>('/api/v1/auth/register', {
-      method: 'POST',
-      body: data,
-      retries: 2,
-    }),
-  
-  refresh: (refreshToken: string) =>
-    request<RefreshResponse>('/api/v1/auth/refresh', {
-      method: 'POST',
-      body: { refreshToken },
-      retries: 2,
-    }),
-  
-  logout: (refreshToken: string) =>
-    request<void>('/api/v1/auth/logout', {
-      method: 'POST',
-      body: { refreshToken },
-      retries: 2,
-    }),
-};
+// NOTE: this used to also export an `auth` object (login/register/refresh/
+// logout via request()) backed by a custom RS256 auth path on the backend.
+// That path was removed as dead code — never called anywhere in the app
+// (real registration goes through lib/endpoints.ts's `auth.register`, real
+// sign-in/out through Supabase directly in app/context/AuthContext.tsx) and
+// its tokens were incompatible with the Supabase-JWKS verification every
+// service actually trusts.
 
 /** Health Check */
 export const health = {
@@ -569,52 +576,6 @@ export const health = {
       retries: 3,
     }),
 };
-
-// ============================================
-// Types
-// ============================================
-
-export interface LoginResponse {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  tokenType: string;
-  user: {
-    id: string;
-    tenantId: string;
-    email: string;
-    role: string;
-    workerTag: string;
-    permissions: string[];
-  };
-}
-
-export interface RegisterRequest {
-  owner_email: string;
-  password: string;
-  organization_name: string;
-  currency?: string;
-}
-
-export interface RegisterResponse {
-  organization_id: string;
-  organization_name: string;
-  billing_tier: string;
-  currency: string;
-  owner: {
-    id: string;
-    tenantId: string;
-    email: string;
-    role: string;
-    workerTag: string;
-    permissions: string[];
-  };
-}
-
-export interface RefreshResponse {
-  accessToken: string;
-  expiresIn: number;
-}
 
 // Helper to check if service is reachable
 export async function checkServiceReachability(): Promise<{ reachable: boolean; url: string; message?: string }> {

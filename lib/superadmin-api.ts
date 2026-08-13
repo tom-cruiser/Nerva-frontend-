@@ -19,7 +19,7 @@ const BASE = '/api/v1/superadmin';
 
 // ── Shared types (mirror services/superadmin's response shapes) ────────────
 
-export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'DELETED';
+export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'DELETED' | 'PENDING_APPROVAL';
 export type BillingTier = 'starter' | 'premium' | 'business' | 'business_premium';
 export type SubscriptionStatus = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
 
@@ -201,6 +201,8 @@ export const tenants = {
     }),
   unblock: (tenantId: string) =>
     request<{ tenant: TenantRow; already_active?: boolean }>(`${BASE}/tenants/${tenantId}/unblock`, { method: 'POST' }),
+  approve: (tenantId: string) =>
+    request<{ tenant: TenantRow }>(`${BASE}/tenants/${tenantId}/approve`, { method: 'POST' }),
   softDelete: (tenantId: string, reason: string) =>
     request<{ tenant: TenantRow; already_deleted?: boolean }>(`${BASE}/tenants/${tenantId}/delete`, {
       method: 'POST', body: { reason },
@@ -242,11 +244,57 @@ export const subscriptions = {
       `${BASE}/tenants/${tenantId}/feature-flags`,
     ),
   setTenantFeatureFlag: (tenantId: string, key: string, enabled: boolean) =>
-    request<{ flag: unknown }>(`${BASE}/tenants/${tenantId}/feature-flags/${key}`, {
-      method: 'PATCH', body: { enabled },
-    }),
+    request<{ override: { tenant_id: string; flag_key: string; enabled: boolean; overridden_by: string; overridden_at: string } }>(
+      `${BASE}/tenants/${tenantId}/feature-flags/${key}`,
+      { method: 'PATCH', body: { enabled } },
+    ),
   resetTenantFeatureFlag: (tenantId: string, key: string) =>
-    request<{ ok: boolean }>(`${BASE}/tenants/${tenantId}/feature-flags/${key}/reset`, { method: 'POST' }),
+    request<{ tenant_id: string; flag_key: string; reset: boolean }>(
+      `${BASE}/tenants/${tenantId}/feature-flags/${key}/reset`,
+      { method: 'POST' },
+    ),
+};
+
+// ── Subscription upgrade requests (subscriptions-router.ts) ────────────────
+// The other direction from subscriptions.changePlan above — a tenant Admin
+// requests an upgrade (services/auth-tenant's POST /api/v1/auth/subscription/
+// request), a Super Admin approves or declines it here.
+
+export type BillingCycle = 'monthly' | 'semestral' | 'annual';
+export type SubscriptionRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+export interface SubscriptionRequestRow {
+  id: string;
+  tenant_id: string;
+  requested_plan_code: BillingTier;
+  billing_cycle: BillingCycle;
+  status: SubscriptionRequestStatus;
+  requested_by: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  tenant_name: string;
+  tenant_slug: string;
+  requested_by_email: string | null;
+}
+
+export const upgradeRequests = {
+  list: (status?: SubscriptionRequestStatus) =>
+    request<{ requests: SubscriptionRequestRow[]; timestamp: string }>(
+      `${BASE}/subscription-requests${status ? `?status=${status}` : ''}`,
+    ),
+  approve: (id: string, body?: { custom_end_date?: string; reason?: string }) =>
+    request<{ subscription: TenantSubscription; tenant_reactivated: boolean }>(
+      `${BASE}/subscription-requests/${id}/approve`,
+      { method: 'POST', body: body ?? {} },
+    ),
+  reject: (id: string, reason: string) =>
+    request<{ request: SubscriptionRequestRow }>(
+      `${BASE}/subscription-requests/${id}/reject`,
+      { method: 'POST', body: { reason } },
+    ),
 };
 
 // ── Platform analytics (analytics-router.ts) ─────────────────────────────────
@@ -261,9 +309,13 @@ export const analytics = {
 export const platformOps = {
   listStaff: () => request<{ staff: PlatformStaffRow[] }>(`${BASE}/staff`),
   grantStaff: (email: string, platformRole: 'SUPPORT' | 'BILLING_ADMIN' | 'SUPERADMIN') =>
-    request<{ ok: boolean }>(`${BASE}/staff/grant`, { method: 'POST', body: { email, platform_role: platformRole } }),
+    request<{ user_id: string; email: string; platform_role: string; permissions: string[] }>(
+      `${BASE}/staff/grant`, { method: 'POST', body: { email, platform_role: platformRole } },
+    ),
   revokeStaff: (email: string) =>
-    request<{ ok: boolean }>(`${BASE}/staff/revoke`, { method: 'POST', body: { email } }),
+    request<{ user_id: string; email: string; permissions: string[] }>(
+      `${BASE}/staff/revoke`, { method: 'POST', body: { email } },
+    ),
 
   killTenantSessions: (tenantId: string, reason: string) =>
     request<{ user_count: number }>(`${BASE}/tenants/${tenantId}/kill-sessions`, { method: 'POST', body: { reason } }),
@@ -288,7 +340,7 @@ export const platformOps = {
       method: 'PATCH', body: { max_requests: maxRequests, window_seconds: windowSeconds, reason },
     }),
   resetRateLimit: (tenantId: string) =>
-    request<{ ok: boolean }>(`${BASE}/tenants/${tenantId}/rate-limit/reset`, { method: 'POST' }),
+    request<{ tenant_id: string; cleared: boolean }>(`${BASE}/tenants/${tenantId}/rate-limit/reset`, { method: 'POST' }),
 };
 
 // ── Global settings, announcements, read-only support tokens ───────────────
@@ -305,7 +357,7 @@ export const settings = {
       method: 'POST', body: { message, level, ends_at: endsAt },
     }),
   deactivateAnnouncement: (id: string) =>
-    request<{ ok: boolean }>(`${BASE}/announcements/${id}/deactivate`, { method: 'POST' }),
+    request<{ announcement: AnnouncementRow }>(`${BASE}/announcements/${id}/deactivate`, { method: 'POST' }),
   /** Public — no auth. What every tenant frontend would poll for a banner. */
   activeAnnouncements: () =>
     request<{ announcements: Array<Pick<AnnouncementRow, 'id' | 'message' | 'level' | 'starts_at' | 'ends_at'>> }>(
@@ -319,7 +371,7 @@ export const settings = {
       { method: 'POST', body: { reason, ttl_minutes: ttlMinutes } },
     ),
   listSupportTokens: (tenantId: string) =>
-    request<{ tokens: SupportTokenRow[] }>(`${BASE}/tenants/${tenantId}/support-tokens`),
+    request<{ support_tokens: SupportTokenRow[] }>(`${BASE}/tenants/${tenantId}/support-tokens`),
   revokeSupportToken: (id: string) =>
-    request<{ ok: boolean }>(`${BASE}/support-tokens/${id}/revoke`, { method: 'POST' }),
+    request<{ id: string; revoked: boolean }>(`${BASE}/support-tokens/${id}/revoke`, { method: 'POST' }),
 };

@@ -1,9 +1,11 @@
 'use client';
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase';
 import { tokenStore } from '../../lib/token-store';
 import { clearAllOfflineData } from '../../lib/offline-cleardown';
+import { connectRealtime, disconnectRealtime } from '../../lib/realtime';
 import { ROLE_PERMISSIONS } from '../../lib/types';
 import type { AuthUser, Permission, UserRole } from '../../lib/types';
 
@@ -124,6 +126,80 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       sub.subscription.unsubscribe();
     };
   }, [applySession]);
+
+  // Real-time WebSocket connection (services/realtime) — connect once
+  // authenticated so subscription:updated/tenant:status_changed pushes reach
+  // this tab instantly (see lib/realtime.ts), disconnect on logout so a
+  // stale/anonymous socket doesn't linger.
+  useEffect(() => {
+    if (status === 'authenticated') {
+      connectRealtime();
+    } else {
+      disconnectRealtime();
+    }
+    return () => disconnectRealtime();
+  }, [status]);
+
+  // Proactively refresh the Supabase session — on a timer, whenever the tab
+  // regains focus, AND whenever the user navigates to a new page — so a
+  // role/permission/active-status change an Admin makes (see
+  // seats-handler.ts) reaches THIS browser's own UI (Sidebar nav items,
+  // RequireRole page gates) quickly, instead of waiting for the access
+  // token's natural expiry (up to an hour), since app_metadata is a
+  // point-in-time snapshot baked into the token at issuance, not re-read on
+  // every request. The backend already enforces the change immediately
+  // regardless (tenant-context.ts's live per-user override check) — this
+  // keeps what the signed-in user actually SEES in sync too, without
+  // requiring a manual sign-out/in.
+  //
+  // applySession(data.session) is called directly on the refreshed result
+  // (belt-and-braces) rather than relying solely on onAuthStateChange's
+  // 'TOKEN_REFRESHED' event to fire — it should, and normally does, but
+  // this removes any doubt / cross-browser timing edge case.
+  const lastRefreshRef = useRef(0);
+  const refreshNow = useCallback((force = false) => {
+    const now = Date.now();
+    // Throttle: a route change, a focus event, and the timer can all land
+    // within moments of each other — collapse to at most one call per 20s
+    // unless the timer itself is the one firing (force=true).
+    if (!force && now - lastRefreshRef.current < 20_000) return;
+    lastRefreshRef.current = now;
+    supabase.auth.refreshSession()
+      .then(({ data, error }) => {
+        if (!error && data.session) applySession(data.session);
+      })
+      .catch((err) => {
+        console.error('[auth] Background session refresh failed:', err);
+      });
+  }, [applySession]);
+
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+
+    // 60s — matches USER_OVERRIDE_CACHE_TTL_SECONDS on the backend, so the
+    // frontend polls at the same cadence the backend's own cache naturally
+    // invalidates at.
+    const intervalId = setInterval(() => refreshNow(true), 60 * 1000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshNow();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [status, refreshNow]);
+
+  // Refresh on every in-app navigation too — the moment a worker clicks
+  // into e.g. "Ledgers" right after being granted access, not just whenever
+  // the timer/focus triggers happen to land.
+  const pathname = usePathname();
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    refreshNow();
+  }, [pathname, status, refreshNow]);
 
   const login = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({

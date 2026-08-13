@@ -75,15 +75,46 @@ const NAV: NavItem[] = [
     ),
     permission: 'shifts:read'
   },
-  { 
-    href: '/whatsapp', 
-    label: 'WhatsApp', 
+  {
+    href: '/whatsapp',
+    label: 'WhatsApp',
     icon: (props) => (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
         <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
       </svg>
-    ), 
-    permission: 'whatsapp:send' 
+    ),
+    permission: 'whatsapp:send'
+  },
+  {
+    href: '/settings/seats',
+    label: 'Team',
+    icon: (props) => (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+    // GET /api/v1/auth/seats requires users:read (OWNER or MANAGER) — matches
+    // who can actually see the roster; the Add-worker button inside the page
+    // separately self-gates on users:create (OWNER only).
+    permission: 'users:read',
+  },
+  {
+    href: '/settings/subscription',
+    label: 'Billing',
+    icon: (props) => (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+        <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+        <line x1="1" y1="10" x2="23" y2="10" />
+      </svg>
+    ),
+    // GET /api/v1/auth/subscription is OWNER-only (no dedicated permission
+    // type for billing — see subscription-handler.ts's inline assertOwner())
+    // — reuse users:update, itself already OWNER-only per ROLE_PERMISSIONS,
+    // rather than inventing a new permission string just for a nav gate.
+    permission: 'users:update',
   },
 ];
 

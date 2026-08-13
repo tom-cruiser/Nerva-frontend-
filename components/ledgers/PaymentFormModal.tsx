@@ -69,7 +69,7 @@ export default function PaymentFormModal({
       newErrors.amount = 'Please enter a valid amount';
     }
 
-    if (type === 'PAYMENT' && selectedCustomer && amount > selectedCustomer.balance) {
+    if (type === 'PAYMENT' && selectedCustomer && Number(amount) > selectedCustomer.balance) {
       newErrors.amount = `Amount exceeds balance (XAF ${selectedCustomer.balance.toLocaleString()})`;
     }
 

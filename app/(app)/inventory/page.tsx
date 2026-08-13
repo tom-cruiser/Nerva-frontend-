@@ -9,6 +9,7 @@ import { inventory } from '@/lib/endpoints';
 import { ApiError } from '@/lib/api';
 import type { Product } from '@/lib/types';
 import RequireRole from '@/components/RequireRole';
+import { useAuth } from '@/app/context/AuthContext';
 import ProductFormModal from '@/components/inventory/ProductFormModal'; // New component
 
 const SEARCH_ICON = (
@@ -41,7 +42,10 @@ function mk(
 }
 
 type Status = 'OK' | 'LOW' | 'OUT';
-const STATUS_COLOR = { OK: 'emerald' as const, LOW: 'amber' as const, OUT: 'red' as const };
+// Badge's 'green' variant renders in emerald tones already
+// (bg-emerald-500/10 text-emerald-400 ...) — 'green' here, not 'emerald',
+// to match Badge's actual Color union with no visual change.
+const STATUS_COLOR = { OK: 'green' as const, LOW: 'amber' as const, OUT: 'red' as const };
 
 function statusOf(p: Product): Status {
   if (p.stock_quantity <= 0) return 'OUT';
@@ -56,6 +60,7 @@ type LoadState =
   | { kind: 'error'; message: string };
 
 export default function InventoryPage() {
+  const { hasPermission } = useAuth();
   const [q, setQ] = useState('');
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -93,6 +98,10 @@ export default function InventoryPage() {
   };
 
   const handleSaveProduct = async (productData: Partial<Product>) => {
+    // Defense-in-depth: the backend already rejects this by permission
+    // (inventory:create / inventory:update), but don't even attempt the call
+    // for a role that lacks it — mirrors the button-level gating below.
+    if (!hasPermission(editingProduct ? 'inventory:update' : 'inventory:create')) return;
     setIsSubmitting(true);
     try {
       if (editingProduct) {
@@ -149,16 +158,18 @@ export default function InventoryPage() {
             <Button variant="outline" size="sm" className="border-zinc-200 bg-white text-zinc-650 hover:bg-zinc-50 hover:text-zinc-800 text-[13px] font-bold">
               Export CSV
             </Button>
-            <Button 
-              size="sm" 
-              className="bg-[#0052ff] hover:bg-[#003bbf] text-white font-bold text-[13px] py-2.5 rounded-xl shadow-md shadow-[#0052ff]/10"
-              onClick={handleAddProduct}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="mr-1.5">
-                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-              </svg>
-              Add Product
-            </Button>
+            {hasPermission('inventory:create') && (
+              <Button
+                size="sm"
+                className="bg-[#0052ff] hover:bg-[#003bbf] text-white font-bold text-[13px] py-2.5 rounded-xl shadow-md shadow-[#0052ff]/10"
+                onClick={handleAddProduct}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="mr-1.5">
+                  <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+                </svg>
+                Add Product
+              </Button>
+            )}
           </div>
         </div>
 
@@ -242,12 +253,14 @@ export default function InventoryPage() {
                         </td>
                         <td className="py-3.5 px-4">
                           <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-                            <button 
-                              className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200/30 hover:bg-zinc-200 transition-colors"
-                              onClick={() => handleEditProduct(p)}
-                            >
-                              Edit
-                            </button>
+                            {hasPermission('inventory:update') && (
+                              <button
+                                className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200/30 hover:bg-zinc-200 transition-colors"
+                                onClick={() => handleEditProduct(p)}
+                              >
+                                Edit
+                              </button>
+                            )}
                             <button className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-[#0052ff]/10 text-[#0052ff] hover:bg-[#0052ff]/20 transition-colors">
                               Restock
                             </button>
