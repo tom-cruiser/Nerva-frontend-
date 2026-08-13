@@ -244,6 +244,18 @@ export interface ApiErrorPayload {
 export type PaymentMethod = 'CASH' | 'MOMO' | 'CREDIT' | 'CARD';
 export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
 
+export interface ProductUnit {
+  id: string;
+  product_id: string;
+  unit_name: string;
+  /** "1 of this unit = conversion_factor base_units" (e.g. Carton = 24 pieces). */
+  conversion_factor: number;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
 export interface Product {
   id: string;
   product_sku: string;
@@ -251,9 +263,19 @@ export interface Product {
   name: string;
   description: string | null;
   unit_price: number;
+  /** Always denominated in base_unit — fractional for weighable/liquid
+   *  items (e.g. 1.5 when base_unit is 'kg'). */
   stock_quantity: number;
   reorder_level: number;
+  /** Recommended reorder size — null until an Admin sets one. */
+  reorder_quantity: number | null;
+  /** The unit stock_quantity is tracked in (e.g. 'pieces', 'kg', 'ml'). */
+  base_unit: string;
   category: string | null;
+  /** Optimistic-lock version — required by PATCH /products/:id. */
+  version: number;
+  /** Non-base selling units for this product, when loaded. */
+  units?: ProductUnit[];
   updated_at: string;
   deleted_at: string | null;
 }

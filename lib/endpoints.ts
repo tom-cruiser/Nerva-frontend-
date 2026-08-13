@@ -19,7 +19,49 @@ import type {
   ShiftHistoryEntry,
   StaffPerformanceResponse,
   BillingTier,
+  ProductUnit,
 } from './types';
+
+// ── Inventory: low-stock/PO-draft + bulk import response shapes ─────────
+export interface LowStockProduct {
+  id: string;
+  product_sku: string;
+  name: string;
+  category: string | null;
+  unit_price: number;
+  stock_quantity: number;
+  reorder_level: number;
+  reorder_quantity: number | null;
+  base_unit: string;
+  supplier_name: string | null;
+  last_reorder_triggered_at: string | null;
+}
+
+export interface DraftPurchaseOrder {
+  supplierName: string;
+  supplierContact: string | null;
+  items: Array<{ product_sku: string; name: string; reorder_quantity: number | null; unit_cost: number | null }>;
+  estimatedTotal: number;
+}
+
+export interface LowStockResponse {
+  products: LowStockProduct[];
+  draftPurchaseOrders: DraftPurchaseOrder[];
+}
+
+export interface ImportRowError {
+  row: number;
+  sku?: string;
+  message: string;
+}
+
+export interface ImportProductsResponse {
+  success: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: ImportRowError[];
+}
 
 /**
  * Endpoint wrappers grouped by service. Each path maps to the gateway
@@ -137,8 +179,8 @@ export const inventory = {
     });
   },
 
-  getLowStockProducts(): Promise<{ products: Product[] }> {
-    return request<{ products: Product[] }>('/api/v1/inventory/products/low-stock', {
+  getLowStockProducts(): Promise<LowStockResponse> {
+    return request<LowStockResponse>('/api/v1/inventory/products/low-stock', {
       auth: true,
     });
   },
@@ -166,6 +208,56 @@ export const inventory = {
       auth: true,
       mutationId: uuid(),
     });
+  },
+
+  /** Downloads all non-deleted products as a .csv or .xlsx file. */
+  exportProducts(format: 'csv' | 'xlsx' = 'csv'): Promise<Blob> {
+    return request<Blob>(`/api/v1/inventory/products/export?format=${format}`, {
+      auth: true,
+      responseType: 'blob',
+    });
+  },
+
+  /** Bulk upsert-by-SKU from an uploaded .csv/.xlsx file — see
+   *  services/inventory's POST /products/import for the exact required
+   *  columns and per-row error semantics. */
+  importProducts(file: File): Promise<ImportProductsResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request<ImportProductsResponse>('/api/v1/inventory/products/import', {
+      method: 'POST',
+      body: formData,
+      auth: true,
+      mutationId: uuid(),
+    });
+  },
+
+  /** Non-base selling units (unit-of-measure conversions) for a product. */
+  units: {
+    list(productId: string): Promise<{ units: ProductUnit[] }> {
+      return request<{ units: ProductUnit[] }>(
+        `/api/v1/inventory/products/${encodeURIComponent(productId)}/units`,
+        { auth: true },
+      );
+    },
+    create(productId: string, data: { unit_name: string; conversion_factor: number; is_default?: boolean }): Promise<ProductUnit> {
+      return request<ProductUnit>(
+        `/api/v1/inventory/products/${encodeURIComponent(productId)}/units`,
+        { method: 'POST', body: data, auth: true, mutationId: uuid() },
+      );
+    },
+    update(id: string, data: Partial<{ unit_name: string; conversion_factor: number; is_default: boolean }>): Promise<ProductUnit> {
+      return request<ProductUnit>(
+        `/api/v1/inventory/units/${encodeURIComponent(id)}`,
+        { method: 'PATCH', body: data, auth: true, mutationId: uuid() },
+      );
+    },
+    remove(id: string): Promise<void> {
+      return request<void>(
+        `/api/v1/inventory/units/${encodeURIComponent(id)}`,
+        { method: 'DELETE', auth: true, mutationId: uuid() },
+      );
+    },
   },
 
   getStats(): Promise<{
@@ -594,9 +686,16 @@ export const ledger = {
     if (options?.format) params.append('format', options.format);
     
     const queryString = params.toString() ? `?${params.toString()}` : '';
+    // Confirmed-broken bug fix: this always called request() with the
+    // default JSON responseType, which would JSON.parse the raw CSV body
+    // and throw "Invalid response format from server" — this endpoint has
+    // never actually been callable. responseType: 'blob' is the real fix
+    // (see lib/api.ts), discovered while adding the same Blob-download
+    // support for inventory export/import.
     return request(`/api/v1/ledger/export${queryString}`, {
       auth: true,
       headers: { Accept: 'text/csv' },
+      responseType: 'blob',
     });
   },
 };

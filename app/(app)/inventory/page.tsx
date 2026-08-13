@@ -11,6 +11,7 @@ import type { Product } from '@/lib/types';
 import RequireRole from '@/components/RequireRole';
 import { useAuth } from '@/app/context/AuthContext';
 import ProductFormModal from '@/components/inventory/ProductFormModal'; // New component
+import ImportProductsModal from '@/components/inventory/ImportProductsModal';
 
 const SEARCH_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="text-zinc-400">
@@ -37,6 +38,7 @@ function mk(
   return {
     id: sku, product_sku: sku, barcode: null, name, description: null,
     unit_price: price, stock_quantity: stock, reorder_level: reorder,
+    reorder_quantity: null, base_unit: 'pieces', version: 1,
     category, updated_at: new Date(0).toISOString(), deleted_at: null,
   };
 }
@@ -66,6 +68,9 @@ export default function InventoryPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const loadProducts = async () => {
     setState({ kind: 'loading' });
@@ -123,6 +128,26 @@ export default function InventoryPage() {
     }
   };
 
+  const handleExport = async () => {
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      const blob = await inventory.exportProducts('csv');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `inventory-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof ApiError ? err.message : 'Failed to export inventory');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const products = state.kind === 'live' ? state.products : SAMPLE;
 
   const filtered = useMemo(
@@ -155,9 +180,25 @@ export default function InventoryPage() {
             </p>
           </div>
           <div className="flex gap-2.5">
-            <Button variant="outline" size="sm" className="border-zinc-200 bg-white text-zinc-650 hover:bg-zinc-50 hover:text-zinc-800 text-[13px] font-bold">
-              Export CSV
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-zinc-200 bg-white text-zinc-650 hover:bg-zinc-50 hover:text-zinc-800 text-[13px] font-bold"
+              onClick={handleExport}
+              disabled={isExporting}
+            >
+              {isExporting ? 'Exporting...' : 'Export CSV'}
             </Button>
+            {hasPermission('inventory:create') && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-zinc-200 bg-white text-zinc-650 hover:bg-zinc-50 hover:text-zinc-800 text-[13px] font-bold"
+                onClick={() => setIsImportModalOpen(true)}
+              >
+                Import
+              </Button>
+            )}
             {hasPermission('inventory:create') && (
               <Button
                 size="sm"
@@ -182,6 +223,9 @@ export default function InventoryPage() {
         )}
         {state.kind === 'error' && (
           <Banner tone="error">Failed to load inventory: {state.message}</Banner>
+        )}
+        {exportError && (
+          <Banner tone="error">Failed to export inventory: {exportError}</Banner>
         )}
 
         {/* Summary strip */}
@@ -293,6 +337,13 @@ export default function InventoryPage() {
         onSave={handleSaveProduct}
         product={editingProduct}
         isSubmitting={isSubmitting}
+      />
+
+      {/* Import Modal */}
+      <ImportProductsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImported={loadProducts}
       />
     </RequireRole>
   );

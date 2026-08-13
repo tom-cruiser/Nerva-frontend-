@@ -80,6 +80,10 @@ interface RequestOptions {
   timeout?: number;
   tenantId?: string;
   retries?: number; // Number of retries for network errors
+  /** 'blob' skips JSON.parse and resolves the raw response body — for file
+   *  downloads (CSV/XLSX export). Default 'json' preserves existing behavior
+   *  for every other call site. */
+  responseType?: 'json' | 'blob';
 }
 
 async function getAccessToken(): Promise<string | null> {
@@ -193,11 +197,17 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     timeout = 30000,
     tenantId,
     retries = 3, // Default 3 retries
+    responseType = 'json',
   } = opts;
+
+  // FormData (multipart file upload) must NOT be JSON.stringify'd, and must
+  // NOT get an explicit Content-Type — fetch/the browser sets the correct
+  // multipart boundary itself only when Content-Type is left unset.
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
 
   const finalHeaders: Record<string, string> = { ...headers };
 
-  if (body !== undefined) {
+  if (body !== undefined && !isFormData) {
     finalHeaders['Content-Type'] = 'application/json';
   }
 
@@ -260,7 +270,7 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
       let res = await fetch(fullUrl, {
         method,
         headers: finalHeaders,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: isFormData ? (body as FormData) : body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
 
@@ -277,7 +287,7 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
             res = await fetch(fullUrl, {
               method,
               headers: finalHeaders,
-              body: body !== undefined ? JSON.stringify(body) : undefined,
+              body: isFormData ? (body as FormData) : body !== undefined ? JSON.stringify(body) : undefined,
             });
             console.log('[API] Token refresh successful, retrying request...');
           } else {
@@ -297,6 +307,10 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
         if (res.status === 204 || res.headers.get('content-length') === '0') {
           return undefined as T;
+        }
+
+        if (responseType === 'blob') {
+          return (await res.blob()) as T;
         }
 
         const text = await res.text();

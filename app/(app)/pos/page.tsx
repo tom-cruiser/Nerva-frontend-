@@ -114,12 +114,12 @@ export default function PosPage() {
   // ─── Load Sample Products (Fallback) ──────────────────────────────────────
   const loadSampleProducts = () => {
     const sampleProducts: Product[] = [
-      { id: '1', product_sku: 'RICE-50KG', name: 'Rice 50kg', barcode: null, description: null, unit_price: 18000, stock_quantity: 2, reorder_level: 5, category: 'Rice', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '2', product_sku: 'COIL-2L', name: 'Cooking Oil 2L', barcode: null, description: null, unit_price: 2800, stock_quantity: 0, reorder_level: 3, category: 'Oil', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '3', product_sku: 'SUGA-25KG', name: 'Sugar 25kg', barcode: null, description: null, unit_price: 9200, stock_quantity: 24, reorder_level: 5, category: 'Sugar', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '4', product_sku: 'TOMA-400G', name: 'Tomato Paste 400g', barcode: null, description: null, unit_price: 650, stock_quantity: 88, reorder_level: 10, category: 'Canned', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '5', product_sku: 'SOAP-LUX', name: 'Lux Soap ×12', barcode: null, description: null, unit_price: 4200, stock_quantity: 15, reorder_level: 5, category: 'Soap', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '6', product_sku: 'MILK-1L', name: 'UHT Milk 1L', barcode: null, description: null, unit_price: 1200, stock_quantity: 6, reorder_level: 3, category: 'Dairy', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '1', product_sku: 'RICE-50KG', name: 'Rice 50kg', barcode: null, description: null, unit_price: 18000, stock_quantity: 2, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', version: 1, category: 'Rice', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '2', product_sku: 'COIL-2L', name: 'Cooking Oil 2L', barcode: null, description: null, unit_price: 2800, stock_quantity: 0, reorder_level: 3, reorder_quantity: null, base_unit: 'pieces', version: 1, category: 'Oil', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '3', product_sku: 'SUGA-25KG', name: 'Sugar 25kg', barcode: null, description: null, unit_price: 9200, stock_quantity: 24, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', version: 1, category: 'Sugar', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '4', product_sku: 'TOMA-400G', name: 'Tomato Paste 400g', barcode: null, description: null, unit_price: 650, stock_quantity: 88, reorder_level: 10, reorder_quantity: null, base_unit: 'pieces', version: 1, category: 'Canned', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '5', product_sku: 'SOAP-LUX', name: 'Lux Soap ×12', barcode: null, description: null, unit_price: 4200, stock_quantity: 15, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', version: 1, category: 'Soap', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '6', product_sku: 'MILK-1L', name: 'UHT Milk 1L', barcode: null, description: null, unit_price: 1200, stock_quantity: 6, reorder_level: 3, reorder_quantity: null, base_unit: 'pieces', version: 1, category: 'Dairy', updated_at: new Date().toISOString(), deleted_at: null },
     ];
     setProducts(sampleProducts);
   };
