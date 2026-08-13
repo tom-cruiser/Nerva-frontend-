@@ -67,8 +67,25 @@ export function connectRealtime(): void {
     }
   });
 
+  // Socket.IO's default reconnection is infinite-retry with backoff, so a
+  // backend that's briefly unreachable (dev server still starting, a network
+  // blip, a token not ready yet) fires this on every attempt — every few
+  // seconds, indefinitely, until it recovers. console.error was too loud for
+  // that: Next.js's dev overlay treats every console.error as a blocking
+  // full-screen "Console Error", so a single transient/self-healing outage
+  // was popping that overlay over and over. console.warn surfaces the same
+  // diagnostic in the console without hijacking the page, and the "only once
+  // per outage" guard (reset on the next successful 'connect') keeps it from
+  // spamming at all while retries are still in flight.
+  let hasWarnedThisOutage = false;
   socket.on('connect_error', (err: Error) => {
-    console.error('[realtime] Connection error:', err.message);
+    if (!hasWarnedThisOutage) {
+      hasWarnedThisOutage = true;
+      console.warn('[realtime] Connection error (will keep retrying):', err.message);
+    }
+  });
+  socket.on('connect', () => {
+    hasWarnedThisOutage = false;
   });
 
   // Replay anything registered while the socket didn't exist yet.
