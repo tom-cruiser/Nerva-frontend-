@@ -758,11 +758,35 @@ export const sync = {
 
 // ── sales analytics (sales-sync's analytics-router.ts) ───────────────
 export interface SalesReport {
-  date: string;
-  period: 'daily' | 'weekly' | 'monthly';
+  date?: string;
+  start?: string;
+  end?: string;
+  period: 'daily' | 'weekly' | 'monthly' | 'custom';
   totalSales: number;
   totalOrders: number;
   averageOrderValue: number;
+  /** Sum of sales.discount_amount over the window (whatsapp-report.md's "Total Discount Amount"). */
+  totalDiscountAmount: number;
+  /**
+   * revenue - COGS (inventories.cost_price), or `null` when any sold line
+   * item in the window has no cost_price set — a deliberately honest
+   * "unavailable" rather than a number that looks trustworthy but is
+   * actually a floor. See productsWithoutCost.
+   */
+  netProfit: number | null;
+  /** Count of sold line items with no matching cost_price — explains a null netProfit. */
+  productsWithoutCost: number;
+  /** Point-in-time count of products at/below their reorder level (not date-range scoped). */
+  lowStockCount: number;
+  cashierPerformance: Array<{
+    workerTag: string;
+    fullName: string;
+    role: string | null;
+    salesCount: number;
+    revenue: number;
+    /** Most recent cash_drawer_shifts.status for this worker, or null if they've never opened one. */
+    registerStatus: string | null;
+  }>;
   topSellingProducts: Array<{ sku: string; name: string; quantity: number; revenue: number }>;
   revenueByCategory: Array<{ category: string; revenue: number }>;
   paymentMethods: Array<{ method: string; amount: number; count: number }>;
@@ -780,9 +804,15 @@ export interface SalesReport {
 }
 
 export const analytics = {
-  getSalesReport(date: string, period: 'daily' | 'weekly' | 'monthly' = 'daily'): Promise<SalesReport> {
+  getSalesReport(
+    dateOrRange: string | { start: string; end: string },
+    period: 'daily' | 'weekly' | 'monthly' | 'custom' = 'daily',
+  ): Promise<SalesReport> {
+    const query = typeof dateOrRange === 'string'
+      ? { date: dateOrRange, period }
+      : { start: dateOrRange.start, end: dateOrRange.end, period: 'custom' };
     return request<SalesReport>('/api/v1/sync/analytics/sales-report', {
-      query: { date, period },
+      query,
       auth: true,
     });
   },

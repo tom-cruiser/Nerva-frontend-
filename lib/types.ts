@@ -272,6 +272,8 @@ export interface Product {
   /** The unit stock_quantity is tracked in (e.g. 'pieces', 'kg', 'ml'). */
   base_unit: string;
   category: string | null;
+  /** Cost basis for Net Profit reporting — null until an Admin sets one. */
+  cost_price: number | null;
   /** Optimistic-lock version — required by PATCH /products/:id. */
   version: number;
   /** Non-base selling units for this product, when loaded. */

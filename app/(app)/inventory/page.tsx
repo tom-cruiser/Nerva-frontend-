@@ -38,7 +38,7 @@ function mk(
   return {
     id: sku, product_sku: sku, barcode: null, name, description: null,
     unit_price: price, stock_quantity: stock, reorder_level: reorder,
-    reorder_quantity: null, base_unit: 'pieces', version: 1,
+    reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1,
     category, updated_at: new Date(0).toISOString(), deleted_at: null,
   };
 }

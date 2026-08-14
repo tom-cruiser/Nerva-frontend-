@@ -557,7 +557,77 @@ export const whatsapp = {
       timeout: 5000,
       retries: 3,
     }),
+
+  // ── Automated Report Schedule (whatsapp-report.md §2) ──────────────────
+  // Grouped here, not lib/endpoints.ts's `analytics` (sales-sync), because
+  // this is whatsapp-engine's own concern — same convention as the rest of
+  // this `whatsapp` object.
+  getReportSchedule: () =>
+    request<WhatsappReportSchedule>('/api/v1/whatsapp/reports/schedule', {
+      auth: true,
+      timeout: 10000,
+    }),
+
+  updateReportSchedule: (schedule: WhatsappReportScheduleInput) =>
+    request<WhatsappReportSchedule>('/api/v1/whatsapp/reports/schedule', {
+      method: 'POST',
+      body: schedule,
+      auth: true,
+      timeout: 10000,
+    }),
+
+  // Real PDF bytes for the Reports page's "Export PDF" button — reuses the
+  // already-fetched analytics summary, no new aggregation on the backend.
+  getReportPdf: (date: string, period: string, summary: unknown) =>
+    request<Blob>('/api/v1/whatsapp/reports/pdf', {
+      method: 'POST',
+      body: { date, period, summary },
+      auth: true,
+      responseType: 'blob',
+      timeout: 20000,
+    }),
+
+  // Recent automated-dispatch history — without this the Scheduled
+  // Messages UI has no way to show whether the cron actually ran/sent
+  // anything (confirmed real gap: a tenant had to have the backend logs
+  // checked manually to find out their report never went out).
+  getReportLogs: () =>
+    request<{ logs: WhatsappReportLogEntry[] }>('/api/v1/whatsapp/reports/schedule/logs', {
+      auth: true,
+      timeout: 10000,
+    }),
+
+  // Sends the saved schedule's report immediately — bypasses both the
+  // delivery-time match and the once-per-day guard the real cron enforces,
+  // so a tenant can verify delivery on demand instead of waiting for (and
+  // then being blocked by) a real cron tick.
+  sendReportTestNow: () =>
+    request<{ results: Array<{ phone: string; status: 'SENT' | 'FAILED'; error?: string }> }>(
+      '/api/v1/whatsapp/reports/schedule/test-send',
+      { method: 'POST', auth: true, timeout: 30000 },
+    ),
 };
+
+export interface WhatsappReportSchedule {
+  enabled: boolean;
+  frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  deliveryTime: string; // 'HH:MM'
+  timezone: string;
+  dayOfWeek: number | null; // 0=Sunday..6=Saturday
+  dayOfMonth: number | null; // 1-31
+  recipientPhones: string[];
+  includedSections: string[]; // subset of sales_summary/cashier_breakdown/low_stock_warnings/profit_metrics
+  updatedAt: string | null;
+}
+
+export type WhatsappReportScheduleInput = Omit<WhatsappReportSchedule, 'updatedAt'>;
+
+export interface WhatsappReportLogEntry {
+  recipientPhone: string;
+  status: 'SENT' | 'FAILED';
+  sentAt: string;
+  errorDetails: string | null;
+}
 
 // NOTE: this used to also export an `auth` object (login/register/refresh/
 // logout via request()) backed by a custom RS256 auth path on the backend.

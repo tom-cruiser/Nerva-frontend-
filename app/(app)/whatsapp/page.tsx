@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button';
 import RequireRole from '@/components/RequireRole';
 import BulkSend from '@/components/BulkSend';
 import SendReport from '@/components/SendReport';
+import ScheduledReportConfig from '@/components/whatsapp/ScheduledReportConfig';
 
 // Types
 type ConnectionStatus = 'DISCONNECTED' | 'AUTHENTICATING' | 'READY' | 'FAILED' | 'TIMEOUT' | 'UNAVAILABLE' | 'ERROR';
@@ -473,9 +474,7 @@ export default function WhatsappPage() {
               <div>
                 <Card className="p-6">
                   <h4 className="font-semibold mb-3">⏰ Scheduled Messages</h4>
-                  <div className="text-sm text-zinc-500 text-center py-8">
-                    No scheduled messages configured.
-                  </div>
+                  <ScheduledReportConfig />
                 </Card>
               </div>
             </div>

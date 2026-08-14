@@ -33,6 +33,7 @@ export default function ProductFormModal({
     reorder_level: 0,
     reorder_quantity: null,
     base_unit: 'pieces',
+    cost_price: null,
     barcode: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -51,6 +52,7 @@ export default function ProductFormModal({
         reorder_level: product.reorder_level || 0,
         reorder_quantity: product.reorder_quantity ?? null,
         base_unit: product.base_unit || 'pieces',
+        cost_price: product.cost_price ?? null,
         barcode: product.barcode || '',
         // Confirmed-broken bug fix: this modal never carried `version`
         // forward, yet PATCH /products/:id has always required it for its
@@ -70,6 +72,7 @@ export default function ProductFormModal({
         reorder_level: 0,
         reorder_quantity: null,
         base_unit: 'pieces',
+        cost_price: null,
         barcode: '',
       });
     }
@@ -114,6 +117,10 @@ export default function ProductFormModal({
 
     if (formData.reorder_quantity !== null && formData.reorder_quantity !== undefined && formData.reorder_quantity < 0) {
       newErrors.reorder_quantity = 'Reorder quantity must be a positive number';
+    }
+
+    if (formData.cost_price !== null && formData.cost_price !== undefined && formData.cost_price < 0) {
+      newErrors.cost_price = 'Cost price must be a positive number';
     }
 
     setErrors(newErrors);
@@ -298,6 +305,27 @@ export default function ProductFormModal({
               />
               {errors.unit_price && touched.unit_price && (
                 <p className="text-xs text-red-500 mt-1.5">{errors.unit_price}</p>
+              )}
+            </div>
+
+            {/* Cost Price */}
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1.5">
+                Cost Price (XAF)
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="any"
+                value={formData.cost_price ?? ''}
+                onChange={(e) => handleChange('cost_price', e.target.value === '' ? null : Number(e.target.value))}
+                onBlur={() => handleBlur('cost_price')}
+                placeholder="e.g., 12000"
+                className={errors.cost_price && touched.cost_price ? 'border-red-300 focus:border-red-500' : ''}
+              />
+              <p className="text-[11px] text-zinc-400 mt-1">Used to calculate Net Profit on the Reports page.</p>
+              {errors.cost_price && touched.cost_price && (
+                <p className="text-xs text-red-500 mt-1.5">{errors.cost_price}</p>
               )}
             </div>
 
