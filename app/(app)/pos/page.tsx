@@ -7,6 +7,7 @@ import RequireRole from '@/components/RequireRole';
 import ProductCard from '@/components/pos/ProductCard';
 import CartModal from '@/components/pos/CartModal';
 import CustomerPickerModal, { PickedCustomer } from '@/components/pos/CustomerPickerModal';
+import ReceiptModal, { ReceiptData } from '@/components/pos/ReceiptModal';
 import { useAuth } from '@/app/context/AuthContext';
 import { inventory, sync, ledger } from '@/lib/endpoints';
 import { ApiError, uuid } from '@/lib/api';
@@ -45,7 +46,7 @@ function isSyncResponse(value: unknown): value is SyncResponse {
 }
 
 export default function PosPage() {
-  const { tenantId, hasPermission } = useAuth();
+  const { tenantId, hasPermission, user } = useAuth();
   const { locked: isTenantLocked } = useTenantLock();
   const pendingSalesCount = usePendingSalesCount();
 
@@ -54,6 +55,7 @@ export default function PosPage() {
   const [method, setMethod] = useState<PaymentMethod>('CASH');
   const [selectedCustomer, setSelectedCustomer] = useState<PickedCustomer | null>(null);
   const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState(false);
+  const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [isCharging, setIsCharging] = useState(false);
   const [isCharged, setIsCharged] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -332,6 +334,23 @@ export default function PosPage() {
       device_id: getDeviceId(),
     };
 
+    // Snapshot of what to print — captured now, independent of `cart`/etc.
+    // resetting a moment later, and shown regardless of which of the three
+    // outcomes below the sale lands in: the goods have already changed
+    // hands by the time "Charge" was clicked, so the customer gets a
+    // receipt either way, even if server confirmation is still pending.
+    const buildReceipt = (): ReceiptData => ({
+      transactionId,
+      timestamp: nowTimestamptz(),
+      items: cart.map((item) => ({ name: item.name, sku: item.sku, qty: item.qty, price: item.price })),
+      subtotal,
+      tax,
+      total,
+      method,
+      customerName: method === 'CREDIT' ? selectedCustomer?.name : undefined,
+      workerTag: user?.workerTag ?? 'unknown',
+    });
+
     // Records this sale's amount against the customer's ledger balance once
     // (and only once) the sale itself is confirmed accepted — never before,
     // so a rejected sale (e.g. insufficient stock) can't still leave a debt
@@ -382,6 +401,7 @@ export default function PosPage() {
           // path doesn't know yet whether the sale will even be accepted,
           // so it deliberately does not record a ledger credit.)
           setIsCharged(true);
+          setLastReceipt(buildReceipt());
           setTimeout(() => {
             setCart([]);
             setIsCharged(false);
@@ -399,6 +419,7 @@ export default function PosPage() {
       }
 
       setIsCharged(true);
+      setLastReceipt(buildReceipt());
       await recordCreditForThisSale();
 
       // Optimistically reflect the stock decrement, then reconcile silently
@@ -439,6 +460,7 @@ export default function PosPage() {
             change.id,
           );
           setIsCharged(true);
+          setLastReceipt(buildReceipt());
           setProducts(prev =>
             prev.map(p => {
               const sold = cart.find(c => c.sku === p.product_sku);
@@ -773,6 +795,14 @@ export default function PosPage() {
         isOpen={isCustomerPickerOpen}
         onClose={() => setIsCustomerPickerOpen(false)}
         onSelect={handleSelectCustomer}
+      />
+
+      {/* Receipt — pops up right after a successful charge; printing it is
+          independent of the cart's own auto-clear a couple seconds later. */}
+      <ReceiptModal
+        isOpen={lastReceipt !== null}
+        onClose={() => setLastReceipt(null)}
+        receipt={lastReceipt}
       />
 
       {/* Hide scrollbar styles */}
