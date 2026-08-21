@@ -8,7 +8,7 @@ export type UserRole = 'OWNER' | 'MANAGER' | 'STAFF' | 'VIEWER';
 
 export type Permission =
   | 'inventory:read' | 'inventory:create' | 'inventory:update' | 'inventory:delete'
-  | 'sales:read' | 'sales:create' | 'sales:void'
+  | 'sales:read' | 'sales:create' | 'sales:void' | 'sales:refund'
   // ledger:create/ledger:update were missing here even though the backend
   // (packages/types/src/tenant-context.ts) has always had them and actively
   // gates POST/PATCH /customers with them — added to close the drift.
@@ -22,7 +22,7 @@ export type Permission =
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   OWNER: [
     'inventory:read', 'inventory:create', 'inventory:update', 'inventory:delete',
-    'sales:read', 'sales:create', 'sales:void',
+    'sales:read', 'sales:create', 'sales:void', 'sales:refund',
     'ledger:read', 'ledger:create', 'ledger:update', 'ledger:credit', 'ledger:payment',
     'users:read', 'users:create', 'users:update', 'users:delete',
     'reports:read', 'whatsapp:send',
@@ -30,7 +30,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   MANAGER: [
     'inventory:read', 'inventory:create', 'inventory:update',
-    'sales:read', 'sales:create', 'sales:void',
+    'sales:read', 'sales:create', 'sales:void', 'sales:refund',
     'ledger:read', 'ledger:create', 'ledger:update', 'ledger:credit', 'ledger:payment',
     'users:read',
     'reports:read', 'whatsapp:send',
@@ -187,6 +187,12 @@ export const EXTRA_PERMISSION_GROUPS: ExtraPermissionGroup[] = [
     permissions: ['sales:void'],
   },
   {
+    key: 'refund',
+    label: 'Refund sales',
+    description: 'Process a goods refund (full or partial) against a completed sale.',
+    permissions: ['sales:refund'],
+  },
+  {
     key: 'whatsapp',
     label: 'WhatsApp',
     description: 'Send WhatsApp messages and reports to customers.',
@@ -242,7 +248,24 @@ export interface ApiErrorPayload {
 
 // ── Inventory (sync `pull` shape / inventories table) ───────────────
 export type PaymentMethod = 'CASH' | 'MOMO' | 'CREDIT' | 'CARD';
-export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED';
+export type PaymentStatus = 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED' | 'PARTIALLY_REFUNDED';
+
+/** A recorded delivery/receiving event against one product — the backend's
+ *  restock mechanism (POST /api/v1/inventory/products/:id/supplier-logs).
+ *  Recording one atomically bumps that product's stock_quantity by
+ *  quantity_received in the same transaction. */
+export interface SupplierLog {
+  id: string;
+  product_id: string;
+  product_sku: string;
+  supplier_name: string;
+  supplier_contact: string | null;
+  quantity_received: number;
+  unit_cost: number | null;
+  received_at: string;
+  notes: string | null;
+  created_at: string;
+}
 
 export interface ProductUnit {
   id: string;
@@ -274,6 +297,10 @@ export interface Product {
   category: string | null;
   /** Cost basis for Net Profit reporting — null until an Admin sets one. */
   cost_price: number | null;
+  /** Percentage tax rate (0-100) the shop owner sets on this specific
+   *  product — applied per line item at POS checkout. No tenant-wide
+   *  default; unset means 0%, not "unknown" (unlike cost_price). */
+  tax_rate: number;
   /** Optimistic-lock version — required by PATCH /products/:id. */
   version: number;
   /** Non-base selling units for this product, when loaded. */
@@ -285,6 +312,10 @@ export interface Product {
 export interface SaleItem {
   product_sku: string;
   quantity: number;
+  /** The selling unit this line was rung up in (e.g. 'Carton', 'Kg') —
+   *  omitted means the product's own base_unit. See product_units /
+   *  reserveStockForSale on the backend. */
+  unit?: string;
   unit_price: number;
   total: number;
   worker_tag?: string;
@@ -300,10 +331,118 @@ export interface Sale {
   tax_amount: number;
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
+  /** Running total of everything refunded against this sale so far — 0 until
+   *  the first refund. See POST /api/v1/sync/sales/:saleId/refunds. */
+  refunded_amount: number;
   worker_tag: string;
   sale_timestamp: string;
   voided_at: string | null;
   updated_at: string;
+}
+
+// ── Goods refunds (sales-sync's sales-router.ts) ─────────────────────
+export interface RefundLineItem {
+  product_sku: string;
+  quantity: number;
+  unit?: string;
+  unit_price: number;
+  total: number;
+}
+
+export interface RefundRequest {
+  items: { product_sku: string; quantity: number; unit?: string }[];
+  reason: string;
+  /** FALSE for damaged/unsellable goods — money is still refunded, stock is
+   *  deliberately not returned to sellable inventory. Defaults to true. */
+  restock?: boolean;
+  /** Optional dedup key — a retried submission with the same value replays
+   *  the original refund instead of processing it twice. */
+  client_reference?: string;
+}
+
+export interface RefundRecord {
+  id: string;
+  saleId: string;
+  itemsRefunded: RefundLineItem[];
+  refundAmount: number;
+  reason: string;
+  restocked: boolean;
+  createdAt: string;
+}
+
+export interface RefundResponse {
+  refund: RefundRecord;
+  sale: {
+    id: string;
+    paymentStatus: PaymentStatus;
+    refundedAmount: number;
+    totalAmount: number;
+  };
+  idempotentReplay: boolean;
+}
+
+// ── Sales history (sales-sync's sales-router.ts GET routes) ─────────
+/** One row from GET /api/v1/sync/sales or the `sale` field of the detail
+ *  route — raw snake_case, matching the DB row shape (unlike RefundResponse
+ *  above, which is the POST route's own camelCase result shape). */
+export interface SaleListItem {
+  id: string;
+  transaction_id: string;
+  customer_id: string | null;
+  /** Attached via a LEFT JOIN on customer_ledger — null for a walk-in sale
+   *  or if the customer record was since removed. */
+  customer_name: string | null;
+  items_sold: SaleItem[];
+  total_amount: number;
+  discount_amount: number;
+  tax_amount: number;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  refunded_amount: number;
+  worker_tag: string;
+  sale_timestamp: string;
+  voided_at: string | null;
+  void_reason: string | null;
+  updated_at: string;
+}
+
+export interface SaleListResponse {
+  sales: SaleListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** One row from a sale's refund history (GET .../refunds or embedded in the
+ *  detail response) — snake_case, matches sale_refunds table columns. */
+export interface SaleRefundRow {
+  id: string;
+  items_refunded: RefundLineItem[];
+  refund_amount: number;
+  reason: string;
+  restocked: boolean;
+  ledger_entry_id: string | null;
+  worker_tag: string;
+  refunded_by: string | null;
+  created_at: string;
+}
+
+/** How much of one sold line is still refundable right now — the exact same
+ *  math the backend enforces (computeRefundableLines in refund-service.ts),
+ *  so the refund form can cap its quantity inputs without duplicating it. */
+export interface SaleRefundableLine {
+  product_sku: string;
+  unit?: string;
+  unit_price: number;
+  quantitySold: number;
+  quantityRefunded: number;
+  quantityRemaining: number;
+}
+
+export interface SaleDetailResponse {
+  sale: SaleListItem;
+  refunds: SaleRefundRow[];
+  refundable_lines: SaleRefundableLine[];
 }
 
 // ── Ledger (customer_ledger / ledger_entries tables) ────────────────

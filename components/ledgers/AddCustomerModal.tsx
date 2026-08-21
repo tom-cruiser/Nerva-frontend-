@@ -5,10 +5,22 @@ import Input from '@/components/ui/Input';
 import { ledger } from '@/lib/endpoints';
 import { ApiError } from '@/lib/api';
 
+interface CreatedCustomer {
+  id: string;
+  name: string;
+  phone: string;
+  balance: number;
+}
+
 interface AddCustomerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  /** The created (or matched-existing, if the phone number already had a
+   *  ledger row) customer is passed back so callers that need the new id —
+   *  e.g. the POS credit flow, which attaches it to the sale — don't have
+   *  to re-fetch the customer list to find it. Existing callers that only
+   *  care "a customer now exists, reload my list" can ignore the argument. */
+  onSuccess: (customer?: CreatedCustomer) => void;
 }
 
 export default function AddCustomerModal({
@@ -81,7 +93,7 @@ export default function AddCustomerModal({
       });
 
       console.log('Customer created successfully:', result);
-      
+
       // Reset form
       setFormData({
         name: '',
@@ -89,8 +101,8 @@ export default function AddCustomerModal({
         email: '',
         initialBalance: 0,
       });
-      
-      onSuccess();
+
+      onSuccess({ id: result.id, name: result.name, phone: result.phone, balance: result.balance });
       onClose();
     } catch (err) {
       console.error('Failed to create customer:', err);

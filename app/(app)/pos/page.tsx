@@ -6,8 +6,9 @@ import Input from '@/components/ui/Input';
 import RequireRole from '@/components/RequireRole';
 import ProductCard from '@/components/pos/ProductCard';
 import CartModal from '@/components/pos/CartModal';
+import CustomerPickerModal, { PickedCustomer } from '@/components/pos/CustomerPickerModal';
 import { useAuth } from '@/app/context/AuthContext';
-import { inventory, sync } from '@/lib/endpoints';
+import { inventory, sync, ledger } from '@/lib/endpoints';
 import { ApiError, uuid } from '@/lib/api';
 import { getDeviceId, nowTimestamptz } from '@/lib/tenancy';
 import { useTenantLock } from '@/lib/tenant-status';
@@ -21,13 +22,16 @@ const SEARCH_ICON = (
   </svg>
 );
 
-type CartItem = { 
-  sku: string; 
-  name: string; 
-  price: number; 
+type CartItem = {
+  sku: string;
+  name: string;
+  price: number;
   qty: number;
   stock: number;
   id?: string;
+  /** Percentage tax rate (0-100) this product was tagged with in Inventory —
+   *  set per product by the shop owner, not a flat store-wide rate. */
+  taxRate: number;
 };
 type PaymentMethod = 'CASH' | 'MOMO' | 'CREDIT' | 'CARD';
 
@@ -41,13 +45,15 @@ function isSyncResponse(value: unknown): value is SyncResponse {
 }
 
 export default function PosPage() {
-  const { tenantId } = useAuth();
+  const { tenantId, hasPermission } = useAuth();
   const { locked: isTenantLocked } = useTenantLock();
   const pendingSalesCount = usePendingSalesCount();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [method, setMethod] = useState<PaymentMethod>('CASH');
+  const [selectedCustomer, setSelectedCustomer] = useState<PickedCustomer | null>(null);
+  const [isCustomerPickerOpen, setIsCustomerPickerOpen] = useState(false);
   const [isCharging, setIsCharging] = useState(false);
   const [isCharged, setIsCharged] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -114,12 +120,12 @@ export default function PosPage() {
   // ─── Load Sample Products (Fallback) ──────────────────────────────────────
   const loadSampleProducts = () => {
     const sampleProducts: Product[] = [
-      { id: '1', product_sku: 'RICE-50KG', name: 'Rice 50kg', barcode: null, description: null, unit_price: 18000, stock_quantity: 2, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1, category: 'Rice', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '2', product_sku: 'COIL-2L', name: 'Cooking Oil 2L', barcode: null, description: null, unit_price: 2800, stock_quantity: 0, reorder_level: 3, reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1, category: 'Oil', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '3', product_sku: 'SUGA-25KG', name: 'Sugar 25kg', barcode: null, description: null, unit_price: 9200, stock_quantity: 24, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1, category: 'Sugar', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '4', product_sku: 'TOMA-400G', name: 'Tomato Paste 400g', barcode: null, description: null, unit_price: 650, stock_quantity: 88, reorder_level: 10, reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1, category: 'Canned', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '5', product_sku: 'SOAP-LUX', name: 'Lux Soap ×12', barcode: null, description: null, unit_price: 4200, stock_quantity: 15, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1, category: 'Soap', updated_at: new Date().toISOString(), deleted_at: null },
-      { id: '6', product_sku: 'MILK-1L', name: 'UHT Milk 1L', barcode: null, description: null, unit_price: 1200, stock_quantity: 6, reorder_level: 3, reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1, category: 'Dairy', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '1', product_sku: 'RICE-50KG', name: 'Rice 50kg', barcode: null, description: null, unit_price: 18000, stock_quantity: 2, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', cost_price: null, tax_rate: 0, version: 1, category: 'Rice', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '2', product_sku: 'COIL-2L', name: 'Cooking Oil 2L', barcode: null, description: null, unit_price: 2800, stock_quantity: 0, reorder_level: 3, reorder_quantity: null, base_unit: 'pieces', cost_price: null, tax_rate: 0, version: 1, category: 'Oil', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '3', product_sku: 'SUGA-25KG', name: 'Sugar 25kg', barcode: null, description: null, unit_price: 9200, stock_quantity: 24, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', cost_price: null, tax_rate: 0, version: 1, category: 'Sugar', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '4', product_sku: 'TOMA-400G', name: 'Tomato Paste 400g', barcode: null, description: null, unit_price: 650, stock_quantity: 88, reorder_level: 10, reorder_quantity: null, base_unit: 'pieces', cost_price: null, tax_rate: 0, version: 1, category: 'Canned', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '5', product_sku: 'SOAP-LUX', name: 'Lux Soap ×12', barcode: null, description: null, unit_price: 4200, stock_quantity: 15, reorder_level: 5, reorder_quantity: null, base_unit: 'pieces', cost_price: null, tax_rate: 0, version: 1, category: 'Soap', updated_at: new Date().toISOString(), deleted_at: null },
+      { id: '6', product_sku: 'MILK-1L', name: 'UHT Milk 1L', barcode: null, description: null, unit_price: 1200, stock_quantity: 6, reorder_level: 3, reorder_quantity: null, base_unit: 'pieces', cost_price: null, tax_rate: 0, version: 1, category: 'Dairy', updated_at: new Date().toISOString(), deleted_at: null },
     ];
     setProducts(sampleProducts);
   };
@@ -137,6 +143,17 @@ export default function PosPage() {
   useEffect(() => {
     void flushPendingSales();
   }, []);
+
+  // Safety net for clearCart()'s own reset: a cart can also empty out one
+  // item at a time via removeItem, with no single call site to reset
+  // selectedCustomer from. Without this, a customer picked for the previous
+  // (now-abandoned) cart would silently still be attached to whatever gets
+  // rung up next — this catches that regardless of how the cart got empty.
+  useEffect(() => {
+    if (cart.length === 0 && selectedCustomer) {
+      setSelectedCustomer(null);
+    }
+  }, [cart.length, selectedCustomer]);
 
   // ─── Filter products ─────────────────────────────────────────────────────────
   const filteredProducts = useMemo(() => {
@@ -184,6 +201,7 @@ export default function PosPage() {
         qty: 1,
         stock: product.stock_quantity,
         id: product.id,
+        taxRate: product.tax_rate,
       }];
     });
   };
@@ -215,11 +233,47 @@ export default function PosPage() {
   const clearCart = () => {
     setCart([]);
     setIsCharged(false);
+    setSelectedCustomer(null);
+  };
+
+  // Recording a credit sale needs 'ledger:credit' (and 'ledger:read' to even
+  // list customers to pick from) — cashiers don't get these by default (per
+  // admin3.md, they shouldn't see the customer debt book), though an
+  // owner/manager can grant an individual seat "Ledger access" from
+  // Settings → Team. Fail with a clear message here rather than opening a
+  // picker whose first request would just 403.
+  const openCustomerPicker = () => {
+    if (!hasPermission('ledger:credit') || !hasPermission('ledger:read')) {
+      setChargeError("You don't have permission to record credit sales — ask an owner or manager.");
+      return;
+    }
+    setIsCustomerPickerOpen(true);
+  };
+
+  // Picking CREDIT is what triggers the customer picker — a credit sale is
+  // meaningless without knowing whose debt it is. Re-picking CASH/MOMO/CARD
+  // never needs one, and if the cashier already chose a customer and comes
+  // back to CREDIT, there's no need to make them pick again.
+  const handleSelectMethod = (m: PaymentMethod) => {
+    setMethod(m);
+    if (m === 'CREDIT' && !selectedCustomer) {
+      openCustomerPicker();
+    }
+  };
+
+  const handleSelectCustomer = (customer: PickedCustomer) => {
+    setSelectedCustomer(customer);
+    setIsCustomerPickerOpen(false);
   };
 
   // ─── Calculate totals ────────────────────────────────────────────────────────
+  // No flat/general tax rate — each product carries its own tax_rate (set by
+  // the shop owner in Inventory), so the sale's tax is the sum of each
+  // line's own price × qty × rate, not one rate applied to the whole cart.
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const tax = Math.round(subtotal * 0.05);
+  const tax = Math.round(
+    cart.reduce((sum, item) => sum + item.price * item.qty * (item.taxRate / 100), 0),
+  );
   const total = subtotal + tax;
 
   // ─── Handle Payment ─────────────────────────────────────────────────────────
@@ -240,15 +294,26 @@ export default function PosPage() {
       return;
     }
 
+    // A credit sale with nobody attached to it isn't a debt anyone can ever
+    // collect on — require a customer before it's even submitted, rather
+    // than discovering the gap later on the ledger page.
+    if (method === 'CREDIT' && !selectedCustomer) {
+      setChargeError('Select or add a customer to record this sale on credit.');
+      openCustomerPicker();
+      return;
+    }
+
     setIsCharging(true);
     setChargeError(null);
 
+    const transactionId = uuid();
     const change: SyncChange = {
       id: uuid(),
       collection: 'sales',
       action: 'CREATE',
       data: {
-        transaction_id: uuid(),
+        transaction_id: transactionId,
+        customer_id: method === 'CREDIT' ? selectedCustomer!.id : undefined,
         items_sold: cart.map(item => ({
           product_sku: item.sku,
           quantity: item.qty,
@@ -265,6 +330,31 @@ export default function PosPage() {
       updated_at: nowTimestamptz(),
       client_created_at: nowTimestamptz(),
       device_id: getDeviceId(),
+    };
+
+    // Records this sale's amount against the customer's ledger balance once
+    // (and only once) the sale itself is confirmed accepted — never before,
+    // so a rejected sale (e.g. insufficient stock) can't still leave a debt
+    // behind. Runs through @retail/ledger-payments' own dedicated credit
+    // endpoint (not the sales-sync `ledger_entries` collection), which
+    // computes the new balance server-side.
+    //
+    // KNOWN GAP: only covers the fast/online path below. A sale that goes
+    // through the slow-poll or offline-queue fallback further down still
+    // completes as a sale, but its ledger credit is NOT retried the way the
+    // sale itself is — that customer's debt has to be added manually from
+    // the Ledgers page if it happens to land in one of those paths.
+    const recordCreditForThisSale = async () => {
+      if (method !== 'CREDIT' || !selectedCustomer) return;
+      try {
+        await ledger.recordCredit(selectedCustomer.id, total, `POS sale ${transactionId}`);
+      } catch (err) {
+        console.error('Sale succeeded but recording the ledger credit failed:', err);
+        setChargeError(
+          `Sale recorded, but adding XAF ${total.toLocaleString()} to ${selectedCustomer.name}'s ledger failed — `
+          + 'please record this credit manually from the Ledgers page.',
+        );
+      }
     };
 
     try {
@@ -288,11 +378,15 @@ export default function PosPage() {
         }
         if (!polled) {
           // Still processing — the sale is queued server-side, not lost.
+          // (See recordCreditForThisSale's KNOWN GAP comment above — this
+          // path doesn't know yet whether the sale will even be accepted,
+          // so it deliberately does not record a ledger credit.)
           setIsCharged(true);
           setTimeout(() => {
             setCart([]);
             setIsCharged(false);
             setIsCartOpen(false);
+            setSelectedCustomer(null);
           }, 2000);
           return;
         }
@@ -305,6 +399,7 @@ export default function PosPage() {
       }
 
       setIsCharged(true);
+      await recordCreditForThisSale();
 
       // Optimistically reflect the stock decrement, then reconcile silently
       // against the server (a trigger there adjusts the real inventory row).
@@ -320,6 +415,7 @@ export default function PosPage() {
         setCart([]);
         setIsCharged(false);
         setIsCartOpen(false);
+        setSelectedCustomer(null);
       }, 2000);
     } catch (err) {
       console.error('Payment failed:', err);
@@ -333,7 +429,11 @@ export default function PosPage() {
         } else if (err.isServiceUnavailable || err.isUnreachable) {
           // Network/service is down, not a rejection of the sale itself —
           // queue it for automatic retry (see lib/pending-sales-queue.ts)
-          // rather than making the cashier lose the transaction.
+          // rather than making the cashier lose the transaction. No ledger
+          // credit is recorded here either, for the same reason as the
+          // slow-poll path above — see recordCreditForThisSale's KNOWN GAP
+          // comment; whoever reconciles the pending-sales queue later needs
+          // to also add this credit manually if this was a CREDIT sale.
           enqueuePendingSale(
             { tenant_id: tenantId, device_id: getDeviceId(), changes: [change] },
             change.id,
@@ -349,6 +449,7 @@ export default function PosPage() {
             setCart([]);
             setIsCharged(false);
             setIsCartOpen(false);
+            setSelectedCustomer(null);
           }, 2000);
         } else {
           setChargeError(err.message);
@@ -543,7 +644,7 @@ export default function PosPage() {
                     <span className="font-mono text-zinc-700">XAF {subtotal.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-zinc-500 font-semibold">
-                    <span>Tax (5%)</span>
+                    <span>Tax</span>
                     <span className="font-mono text-zinc-700">XAF {tax.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-zinc-900 font-black text-sm pt-2 border-t border-zinc-200/50">
@@ -557,7 +658,7 @@ export default function PosPage() {
                   {(['CASH', 'MOMO', 'CREDIT', 'CARD'] as const).map(m => (
                     <button
                       key={m}
-                      onClick={() => setMethod(m)}
+                      onClick={() => handleSelectMethod(m)}
                       className={`py-2 rounded-lg text-[10px] font-extrabold border transition-all ${
                         method === m
                           ? 'bg-[#0052ff] border-[#0052ff] text-white shadow-sm'
@@ -568,6 +669,24 @@ export default function PosPage() {
                     </button>
                   ))}
                 </div>
+
+                {method === 'CREDIT' && (
+                  <div className="flex items-center justify-between gap-2 bg-amber-50 border border-amber-200/70 rounded-lg px-3 py-2">
+                    {selectedCustomer ? (
+                      <p className="text-xs font-bold text-amber-800 truncate">
+                        Customer: <span className="text-zinc-800">{selectedCustomer.name}</span>
+                      </p>
+                    ) : (
+                      <p className="text-xs font-bold text-amber-700">No customer selected</p>
+                    )}
+                    <button
+                      onClick={openCustomerPicker}
+                      className="text-[11px] font-bold text-[#0052ff] uppercase tracking-wider shrink-0"
+                    >
+                      {selectedCustomer ? 'Change' : 'Select'}
+                    </button>
+                  </div>
+                )}
 
                 {chargeError && (
                   <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200/80 rounded-lg px-3 py-2.5">
@@ -580,7 +699,7 @@ export default function PosPage() {
                   size="lg"
                   loading={isCharging}
                   onClick={handleCharge}
-                  disabled={isCharged || isTenantLocked}
+                  disabled={isCharged || isTenantLocked || (method === 'CREDIT' && !selectedCustomer)}
                 >
                   {isCharging ? 'Processing…' : isCharged ? '✓ Paid' : isTenantLocked ? 'Store suspended' : `Charge XAF ${total.toLocaleString()}`}
                 </Button>
@@ -638,13 +757,23 @@ export default function PosPage() {
           tax={tax}
           total={total}
           method={method}
-          setMethod={setMethod}
+          onSelectMethod={handleSelectMethod}
+          selectedCustomer={selectedCustomer}
+          onChangeCustomer={openCustomerPicker}
           onCharge={handleCharge}
           isCharging={isCharging}
           isCharged={isCharged}
           error={chargeError}
         />
       </div>
+
+      {/* Customer Picker — opened when CREDIT is selected as the payment
+          method, from either the desktop sidebar or the mobile CartModal. */}
+      <CustomerPickerModal
+        isOpen={isCustomerPickerOpen}
+        onClose={() => setIsCustomerPickerOpen(false)}
+        onSelect={handleSelectCustomer}
+      />
 
       {/* Hide scrollbar styles */}
       <style jsx global>{`

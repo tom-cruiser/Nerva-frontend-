@@ -34,6 +34,7 @@ export default function ProductFormModal({
     reorder_quantity: null,
     base_unit: 'pieces',
     cost_price: null,
+    tax_rate: 0,
     barcode: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -53,6 +54,7 @@ export default function ProductFormModal({
         reorder_quantity: product.reorder_quantity ?? null,
         base_unit: product.base_unit || 'pieces',
         cost_price: product.cost_price ?? null,
+        tax_rate: product.tax_rate ?? 0,
         barcode: product.barcode || '',
         // Confirmed-broken bug fix: this modal never carried `version`
         // forward, yet PATCH /products/:id has always required it for its
@@ -73,6 +75,7 @@ export default function ProductFormModal({
         reorder_quantity: null,
         base_unit: 'pieces',
         cost_price: null,
+        tax_rate: 0,
         barcode: '',
       });
     }
@@ -121,6 +124,13 @@ export default function ProductFormModal({
 
     if (formData.cost_price !== null && formData.cost_price !== undefined && formData.cost_price < 0) {
       newErrors.cost_price = 'Cost price must be a positive number';
+    }
+
+    if (
+      formData.tax_rate !== null && formData.tax_rate !== undefined &&
+      (formData.tax_rate < 0 || formData.tax_rate > 100)
+    ) {
+      newErrors.tax_rate = 'Tax rate must be between 0 and 100';
     }
 
     setErrors(newErrors);
@@ -329,6 +339,36 @@ export default function ProductFormModal({
               )}
             </div>
 
+            {/* Tax Rate */}
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1.5">
+                Tax Rate (%)
+              </label>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="any"
+                // `|| ''` (not `?? ''`) deliberately — tax_rate defaults to a
+                // real 0, and 0 is falsy, so this renders an empty field
+                // instead of a literal "0" the user can't backspace past
+                // (which then snapped straight back on the next keystroke).
+                // Matches unit_price/reorder_level below, which already do
+                // this for the same reason.
+                value={formData.tax_rate || ''}
+                onChange={(e) => handleChange('tax_rate', e.target.value === '' ? 0 : Number(e.target.value))}
+                onBlur={() => handleBlur('tax_rate')}
+                placeholder="e.g., 5"
+                className={errors.tax_rate && touched.tax_rate ? 'border-red-300 focus:border-red-500' : ''}
+              />
+              <p className="text-[11px] text-zinc-400 mt-1">
+                Set per product — there is no store-wide tax rate. Leave at 0 if this item isn&apos;t taxed.
+              </p>
+              {errors.tax_rate && touched.tax_rate && (
+                <p className="text-xs text-red-500 mt-1.5">{errors.tax_rate}</p>
+              )}
+            </div>
+
             {/* Stock Quantity */}
             <div>
               <label className="block text-sm font-bold text-zinc-700 mb-1.5">
@@ -338,7 +378,10 @@ export default function ProductFormModal({
                 type="number"
                 min="0"
                 step="0.001"
-                value={formData.stock_quantity ?? ''}
+                // Same `|| ''` fix as tax_rate above — stock_quantity also
+                // defaults to a real 0, which `?? ''` would render as a
+                // literal, un-backspaceable "0".
+                value={formData.stock_quantity || ''}
                 onChange={(e) => handleChange('stock_quantity', Number(e.target.value))}
                 onBlur={() => handleBlur('stock_quantity')}
                 placeholder="e.g., 10"

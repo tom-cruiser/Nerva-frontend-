@@ -23,7 +23,12 @@ interface CartModalProps {
   tax: number;
   total: number;
   method: 'CASH' | 'MOMO' | 'CREDIT' | 'CARD';
-  setMethod: (method: 'CASH' | 'MOMO' | 'CREDIT' | 'CARD') => void;
+  /** Replaces a plain setMethod — selecting CREDIT is what triggers the
+   *  customer picker in the parent, so the parent needs to own this. */
+  onSelectMethod: (method: 'CASH' | 'MOMO' | 'CREDIT' | 'CARD') => void;
+  /** Who a CREDIT sale is being billed to — null until picked. */
+  selectedCustomer: { id: string; name: string } | null;
+  onChangeCustomer: () => void;
   onCharge: () => void;
   isCharging: boolean;
   isCharged: boolean;
@@ -41,7 +46,9 @@ export default function CartModal({
   tax,
   total,
   method,
-  setMethod,
+  onSelectMethod,
+  selectedCustomer,
+  onChangeCustomer,
   onCharge,
   isCharging,
   isCharged,
@@ -180,7 +187,7 @@ export default function CartModal({
                   <span className="font-mono text-zinc-700">XAF {subtotal.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between text-zinc-500 font-medium">
-                  <span>Tax (5%)</span>
+                  <span>Tax</span>
                   <span className="font-mono text-zinc-700">XAF {tax.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between text-zinc-900 font-black text-base sm:text-lg pt-2 border-t border-zinc-200/50">
@@ -194,7 +201,7 @@ export default function CartModal({
                 {(['CASH', 'MOMO', 'CREDIT', 'CARD'] as const).map((m) => (
                   <button
                     key={m}
-                    onClick={() => setMethod(m)}
+                    onClick={() => onSelectMethod(m)}
                     className={`py-2.5 rounded-lg text-xs font-bold border transition-all ${
                       method === m
                         ? 'bg-[#0052ff] border-[#0052ff] text-white shadow-sm'
@@ -205,6 +212,24 @@ export default function CartModal({
                   </button>
                 ))}
               </div>
+
+              {method === 'CREDIT' && (
+                <div className="flex items-center justify-between gap-2 bg-amber-50 border border-amber-200/70 rounded-lg px-3 py-2.5">
+                  {selectedCustomer ? (
+                    <p className="text-xs font-bold text-amber-800 truncate">
+                      Customer: <span className="text-zinc-800">{selectedCustomer.name}</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs font-bold text-amber-700">No customer selected</p>
+                  )}
+                  <button
+                    onClick={onChangeCustomer}
+                    className="text-[11px] font-bold text-[#0052ff] uppercase tracking-wider shrink-0"
+                  >
+                    {selectedCustomer ? 'Change' : 'Select'}
+                  </button>
+                </div>
+              )}
 
               {error && (
                 <div className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200/80 rounded-lg px-3 py-2.5">
@@ -217,7 +242,7 @@ export default function CartModal({
                 size="lg"
                 loading={isCharging}
                 onClick={onCharge}
-                disabled={isCharged}
+                disabled={isCharged || (method === 'CREDIT' && !selectedCustomer)}
               >
                 {isCharging ? 'Processing...' : isCharged ? '✓ Paid' : `Charge XAF ${total.toLocaleString()}`}
               </Button>

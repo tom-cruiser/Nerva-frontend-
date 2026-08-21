@@ -2,11 +2,17 @@
 import { request, uuid, ApiError } from './api';
 import type {
   Product,
+  SupplierLog,
   LedgerBalanceResponse,
   MomoProvider,
   SyncPayload,
   SyncResponse,
   SyncPullResponse,
+  RefundRequest,
+  RefundResponse,
+  SaleListResponse,
+  SaleDetailResponse,
+  SaleRefundRow,
   RegisterRequest,
   RegisterResponse,
   CreateSeatRequest,
@@ -148,13 +154,50 @@ export const inventory = {
     );
   },
 
-  restockProduct(id: string, quantity: number, note?: string): Promise<Product> {
-    return request<Product>(`/api/v1/inventory/products/${encodeURIComponent(id)}/restock`, {
-      method: 'POST',
-      body: { quantity, note },
-      auth: true,
-      mutationId: uuid(),
-    });
+  /**
+   * POST /api/v1/inventory/products/:id/supplier-logs
+   * Records a delivery and atomically adds `quantityReceived` to the
+   * product's stock_quantity in the same transaction — this IS the
+   * restock action; there is no separate /restock endpoint (a previous
+   * version of this method pointed at one, which 404'd every time it was
+   * called since that route never existed on the backend).
+   */
+  restockProduct(id: string, data: {
+    supplierName: string;
+    quantityReceived: number;
+    supplierContact?: string;
+    unitCost?: number;
+    notes?: string;
+  }): Promise<SupplierLog> {
+    return request<SupplierLog>(
+      `/api/v1/inventory/products/${encodeURIComponent(id)}/supplier-logs`,
+      {
+        method: 'POST',
+        body: {
+          supplier_name:     data.supplierName,
+          supplier_contact:  data.supplierContact ?? null,
+          quantity_received: data.quantityReceived,
+          unit_cost:         data.unitCost ?? null,
+          notes:             data.notes ?? null,
+        },
+        auth: true,
+        mutationId: uuid(),
+      },
+    );
+  },
+
+  /**
+   * GET /api/v1/inventory/products/:id/supplier-logs
+   * This product's full delivery/receiving history — every restock, in
+   * order, each carrying whichever supplier and unit cost applied *that*
+   * time (both can change delivery to delivery), which is exactly what the
+   * product detail view surfaces.
+   */
+  getSupplierLogs(productId: string): Promise<{ supplier_logs: SupplierLog[] }> {
+    return request<{ supplier_logs: SupplierLog[] }>(
+      `/api/v1/inventory/products/${encodeURIComponent(productId)}/supplier-logs?limit=200`,
+      { auth: true },
+    );
   },
 
   adjustStock(id: string, quantity: number, reason?: string): Promise<Product> {
@@ -752,6 +795,78 @@ export const sync = {
       body: { deviceName },
       auth: true,
       mutationId: uuid(),
+    });
+  },
+};
+
+// ── goods refunds (sales-sync's sales-router.ts) ──────────────────────
+export const sales = {
+  /**
+   * GET /api/v1/sync/sales
+   * Sales history, paginated newest-first.
+   */
+  list(options?: {
+    q?: string;
+    customerId?: string;
+    paymentStatus?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<SaleListResponse> {
+    return request<SaleListResponse>('/api/v1/sync/sales', {
+      query: {
+        q: options?.q,
+        customer_id: options?.customerId,
+        payment_status: options?.paymentStatus,
+        from: options?.from,
+        to: options?.to,
+        limit: options?.limit,
+        offset: options?.offset,
+      },
+      auth: true,
+    });
+  },
+
+  /**
+   * GET /api/v1/sync/sales/:saleId
+   * One sale's full detail: the sale itself, its refund history, and how
+   * much of each line item is still refundable right now.
+   */
+  getById(saleId: string): Promise<SaleDetailResponse> {
+    return request<SaleDetailResponse>(`/api/v1/sync/sales/${encodeURIComponent(saleId)}`, {
+      auth: true,
+    });
+  },
+
+  /**
+   * POST /api/v1/sync/sales/:saleId/refunds
+   * Processes a full or partial goods refund against a completed sale.
+   * Requires the 'sales:refund' permission. Always-online — unlike
+   * sync.pushBatch this does not go through the offline WatermelonDB queue.
+   */
+  refund(saleId: string, body: RefundRequest): Promise<RefundResponse> {
+    return request<RefundResponse>(
+      `/api/v1/sync/sales/${encodeURIComponent(saleId)}/refunds`,
+      {
+        method: 'POST',
+        // Auto-generate a dedup key when the caller doesn't supply one, so a
+        // dropped-response retry (e.g. a flaky connection) replays the same
+        // refund instead of refunding the goods/money twice.
+        body: { ...body, client_reference: body.client_reference ?? uuid() },
+        auth: true,
+        mutationId: uuid(),
+      },
+    );
+  },
+
+  /**
+   * GET /api/v1/sync/sales/:saleId/refunds
+   * Refund history for one sale (receipt/detail view).
+   */
+  getRefunds(saleId: string): Promise<{ sale_id: string; refunds: SaleRefundRow[] }> {
+    return request(`/api/v1/sync/sales/${encodeURIComponent(saleId)}/refunds`, {
+      auth: true,
     });
   },
 };

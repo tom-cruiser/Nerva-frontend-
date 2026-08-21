@@ -12,6 +12,8 @@ import RequireRole from '@/components/RequireRole';
 import { useAuth } from '@/app/context/AuthContext';
 import ProductFormModal from '@/components/inventory/ProductFormModal'; // New component
 import ImportProductsModal from '@/components/inventory/ImportProductsModal';
+import RestockModal from '@/components/inventory/RestockModal';
+import ProductDetailModal from '@/components/inventory/ProductDetailModal';
 
 const SEARCH_ICON = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="text-zinc-400">
@@ -38,7 +40,7 @@ function mk(
   return {
     id: sku, product_sku: sku, barcode: null, name, description: null,
     unit_price: price, stock_quantity: stock, reorder_level: reorder,
-    reorder_quantity: null, base_unit: 'pieces', cost_price: null, version: 1,
+    reorder_quantity: null, base_unit: 'pieces', cost_price: null, tax_rate: 0, version: 1,
     category, updated_at: new Date(0).toISOString(), deleted_at: null,
   };
 }
@@ -69,6 +71,8 @@ export default function InventoryPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [restockingProduct, setRestockingProduct] = useState<Product | null>(null);
+  const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -100,6 +104,10 @@ export default function InventoryPage() {
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
     setIsModalOpen(true);
+  };
+
+  const handleRestockProduct = (product: Product) => {
+    setRestockingProduct(product);
   };
 
   const handleSaveProduct = async (productData: Partial<Product>) => {
@@ -277,7 +285,11 @@ export default function InventoryPage() {
                   {filtered.map((p) => {
                     const status = statusOf(p);
                     return (
-                      <tr key={p.id} className="hover:bg-[#0052ff]/[0.02] transition-colors group cursor-default">
+                      <tr
+                        key={p.id}
+                        className="hover:bg-[#0052ff]/[0.02] transition-colors group cursor-pointer"
+                        onClick={() => setViewingProduct(p)}
+                      >
                         <td className="py-3.5 px-4 font-mono text-zinc-400 font-bold text-[11px] uppercase tracking-wider">{p.product_sku}</td>
                         <td className="py-3.5 px-4 text-zinc-850 font-bold">{p.name}</td>
                         <td className="py-3.5 px-4">
@@ -300,14 +312,19 @@ export default function InventoryPage() {
                             {hasPermission('inventory:update') && (
                               <button
                                 className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-zinc-100 text-zinc-600 border border-zinc-200/30 hover:bg-zinc-200 transition-colors"
-                                onClick={() => handleEditProduct(p)}
+                                onClick={(e) => { e.stopPropagation(); handleEditProduct(p); }}
                               >
                                 Edit
                               </button>
                             )}
-                            <button className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-[#0052ff]/10 text-[#0052ff] hover:bg-[#0052ff]/20 transition-colors">
-                              Restock
-                            </button>
+                            {hasPermission('inventory:create') && (
+                              <button
+                                className="px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider bg-[#0052ff]/10 text-[#0052ff] hover:bg-[#0052ff]/20 transition-colors"
+                                onClick={(e) => { e.stopPropagation(); handleRestockProduct(p); }}
+                              >
+                                Restock
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -344,6 +361,23 @@ export default function InventoryPage() {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onImported={loadProducts}
+      />
+
+      {/* Restock Modal */}
+      <RestockModal
+        isOpen={restockingProduct !== null}
+        onClose={() => setRestockingProduct(null)}
+        product={restockingProduct}
+        onRestocked={loadProducts}
+      />
+
+      {/* Product Detail Modal — full history: deliveries (supplier + cost
+          per delivery, since either can change reorder to reorder), selling
+          units, and every other small detail not shown in the table row. */}
+      <ProductDetailModal
+        isOpen={viewingProduct !== null}
+        onClose={() => setViewingProduct(null)}
+        product={viewingProduct}
       />
     </RequireRole>
   );
