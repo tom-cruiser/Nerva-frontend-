@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Megaphone, AlertTriangle, Ban } from 'lucide-react';
+import { RefreshCw, Megaphone, AlertTriangle, Ban, Pencil, Trash2, Check, X } from 'lucide-react';
 import { settings } from '@/lib/superadmin-api';
 import type { PlatformSettings, AnnouncementRow } from '@/lib/superadmin-api';
 import { formatDate, formatRelative } from '@/lib/format';
@@ -155,6 +155,47 @@ function AnnouncementsCard({
   const [level, setLevel] = useState<'INFO' | 'WARNING' | 'CRITICAL'>('INFO');
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editMessage, setEditMessage] = useState('');
+  const [editLevel, setEditLevel] = useState<'INFO' | 'WARNING' | 'CRITICAL'>('INFO');
+
+  const startEdit = (a: AnnouncementRow) => {
+    setEditingId(a.id);
+    setEditMessage(a.message);
+    setEditLevel(a.level);
+    setNotice(null);
+  };
+
+  const cancelEdit = () => setEditingId(null);
+
+  const saveEdit = async (id: string) => {
+    if (!editMessage.trim()) return;
+    setBusy(id);
+    try {
+      await settings.updateAnnouncement(id, { message: editMessage.trim(), level: editLevel });
+      setEditingId(null);
+      setNotice({ kind: 'success', text: 'Announcement updated.' });
+      onChanged();
+    } catch (err) {
+      setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Failed to update' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('Permanently delete this announcement? This cannot be undone.')) return;
+    setBusy(id);
+    try {
+      await settings.deleteAnnouncement(id);
+      setNotice({ kind: 'success', text: 'Announcement deleted.' });
+      onChanged();
+    } catch (err) {
+      setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Failed to delete' });
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <Panel>
@@ -196,34 +237,86 @@ function AnnouncementsCard({
 
       <div className="divide-y divide-zinc-100">
         {announcements.map((a) => (
-          <div key={a.id} className="flex items-start justify-between gap-3 py-2.5">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <Pill color={LEVEL_COLOR[a.level]}>{a.level}</Pill>
-                {!a.active && <Pill color="zinc">inactive</Pill>}
-                <span className="text-[11px] text-zinc-400">{formatDate(a.starts_at)}</span>
+          <div key={a.id} className="py-2.5">
+            {editingId === a.id ? (
+              <div className="flex items-end gap-2.5">
+                <div className="flex-1">
+                  <LightField label="Message" value={editMessage} onChange={setEditMessage} />
+                </div>
+                <div className="w-40">
+                  <LightSelect
+                    label="Level"
+                    value={editLevel}
+                    onChange={(v) => setEditLevel(v as typeof editLevel)}
+                    options={LEVEL_OPTIONS}
+                  />
+                </div>
+                <AppButton
+                  size="sm" loading={busy === a.id} disabled={!editMessage.trim()}
+                  onClick={() => saveEdit(a.id)}
+                >
+                  <Check size={14} />
+                </AppButton>
+                <button
+                  title="Cancel"
+                  disabled={busy === a.id}
+                  className="text-zinc-400 hover:text-zinc-600 shrink-0 disabled:opacity-40 p-2"
+                  onClick={cancelEdit}
+                >
+                  <X size={15} />
+                </button>
               </div>
-              <p className="text-[13px] text-zinc-700 mt-1">{a.message}</p>
-            </div>
-            {canWrite && a.active && (
-              <button
-                title="Deactivate"
-                disabled={busy === a.id}
-                className="text-zinc-400 hover:text-red-500 shrink-0 disabled:opacity-40"
-                onClick={async () => {
-                  setBusy(a.id); setNotice(null);
-                  try {
-                    await settings.deactivateAnnouncement(a.id);
-                    onChanged();
-                  } catch (err) {
-                    setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Failed to deactivate' });
-                  } finally {
-                    setBusy(null);
-                  }
-                }}
-              >
-                <Ban size={15} />
-              </button>
+            ) : (
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Pill color={LEVEL_COLOR[a.level]}>{a.level}</Pill>
+                    {!a.active && <Pill color="zinc">inactive</Pill>}
+                    <span className="text-[11px] text-zinc-400">{formatDate(a.starts_at)}</span>
+                  </div>
+                  <p className="text-[13px] text-zinc-700 mt-1">{a.message}</p>
+                </div>
+                {canWrite && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      title="Edit"
+                      disabled={busy === a.id}
+                      className="text-zinc-400 hover:text-[#0052ff] p-1.5 disabled:opacity-40"
+                      onClick={() => startEdit(a)}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    {a.active && (
+                      <button
+                        title="Deactivate"
+                        disabled={busy === a.id}
+                        className="text-zinc-400 hover:text-amber-500 p-1.5 disabled:opacity-40"
+                        onClick={async () => {
+                          setBusy(a.id); setNotice(null);
+                          try {
+                            await settings.deactivateAnnouncement(a.id);
+                            onChanged();
+                          } catch (err) {
+                            setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'Failed to deactivate' });
+                          } finally {
+                            setBusy(null);
+                          }
+                        }}
+                      >
+                        <Ban size={14} />
+                      </button>
+                    )}
+                    <button
+                      title="Delete"
+                      disabled={busy === a.id}
+                      className="text-zinc-400 hover:text-red-500 p-1.5 disabled:opacity-40"
+                      onClick={() => handleDelete(a.id)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         ))}

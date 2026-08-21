@@ -340,6 +340,18 @@ export interface Sale {
   updated_at: string;
 }
 
+// ── Platform announcements (superadmin's public-announcements-router.ts /
+//    settings-router.ts) ──────────────────────────────────────────────
+export type AnnouncementLevel = 'INFO' | 'WARNING' | 'CRITICAL';
+
+export interface PlatformAnnouncement {
+  id: string;
+  message: string;
+  level: AnnouncementLevel;
+  starts_at: string;
+  ends_at: string | null;
+}
+
 // ── Goods refunds (sales-sync's sales-router.ts) ─────────────────────
 export interface RefundLineItem {
   product_sku: string;

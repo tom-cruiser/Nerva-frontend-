@@ -356,8 +356,17 @@ export const settings = {
     request<{ announcement: AnnouncementRow }>(`${BASE}/announcements`, {
       method: 'POST', body: { message, level, ends_at: endsAt },
     }),
+  updateAnnouncement: (
+    id: string,
+    patch: Partial<{ message: string; level: 'INFO' | 'WARNING' | 'CRITICAL'; ends_at: string | null }>,
+  ) =>
+    request<{ announcement: AnnouncementRow }>(`${BASE}/announcements/${id}`, {
+      method: 'PATCH', body: patch,
+    }),
   deactivateAnnouncement: (id: string) =>
     request<{ announcement: AnnouncementRow }>(`${BASE}/announcements/${id}/deactivate`, { method: 'POST' }),
+  deleteAnnouncement: (id: string) =>
+    request<{ success: boolean; id: string }>(`${BASE}/announcements/${id}`, { method: 'DELETE' }),
   /** Public — no auth. What every tenant frontend would poll for a banner. */
   activeAnnouncements: () =>
     request<{ announcements: Array<Pick<AnnouncementRow, 'id' | 'message' | 'level' | 'starts_at' | 'ends_at'>> }>(

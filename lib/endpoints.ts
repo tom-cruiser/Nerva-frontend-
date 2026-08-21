@@ -26,6 +26,7 @@ import type {
   StaffPerformanceResponse,
   BillingTier,
   ProductUnit,
+  PlatformAnnouncement,
 } from './types';
 
 // ── Inventory: low-stock/PO-draft + bulk import response shapes ─────────
@@ -917,6 +918,23 @@ export interface SalesReport {
   }>;
   timestamp: string;
 }
+
+// ── Platform announcements ────────────────────────────────────────────
+export const announcements = {
+  /**
+   * GET /api/v1/superadmin/announcements/active
+   * Deliberately unauthenticated on the backend (public-announcements-
+   * router.ts, mounted before that service's auth middleware) — it must
+   * work the same way GET /health does, with no bearer token, so this is
+   * the one endpoint call in the app made with `auth: false`.
+   */
+  getActive(): Promise<{ announcements: PlatformAnnouncement[] }> {
+    return request<{ announcements: PlatformAnnouncement[] }>(
+      '/api/v1/superadmin/announcements/active',
+      { auth: false },
+    );
+  },
+};
 
 export const analytics = {
   getSalesReport(
