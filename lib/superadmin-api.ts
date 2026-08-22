@@ -190,6 +190,26 @@ export interface SupportTokenRow {
   last_used_at: string | null;
 }
 
+export interface SupportThreadRow {
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  status: 'OPEN' | 'CLOSED';
+  last_message_at: string | null;
+  last_message_preview: string | null;
+  unread_count: number;
+}
+
+export interface SupportMessageRow {
+  id: string;
+  tenantId: string;
+  senderType: 'TENANT' | 'STAFF';
+  senderUserId: string;
+  senderEmail: string | null;
+  body: string;
+  createdAt: string;
+}
+
 // ── Tenant lifecycle (superadmin-router.ts) ─────────────────────────────────
 
 export const tenants = {
@@ -383,4 +403,20 @@ export const settings = {
     request<{ support_tokens: SupportTokenRow[] }>(`${BASE}/tenants/${tenantId}/support-tokens`),
   revokeSupportToken: (id: string) =>
     request<{ id: string; revoked: boolean }>(`${BASE}/support-tokens/${id}/revoke`, { method: 'POST' }),
+};
+
+// ── Tenant support chat (support-router.ts) ─────────────────────────────────
+// The Super Admin side of the same thread lib/support-api.ts's `support`
+// object talks to from the tenant side. A different export from `settings`
+// above (not folded in) — this is a live inbox with its own real-time/
+// polling lifecycle, not a settings CRUD form.
+
+export const support = {
+  listThreads: () => request<{ threads: SupportThreadRow[] }>(`${BASE}/support/threads`),
+  getThread: (tenantId: string) =>
+    request<{ messages: SupportMessageRow[] }>(`${BASE}/support/threads/${tenantId}/messages`),
+  reply: (tenantId: string, body: string) =>
+    request<SupportMessageRow>(`${BASE}/support/threads/${tenantId}/messages`, {
+      method: 'POST', body: { body },
+    }),
 };

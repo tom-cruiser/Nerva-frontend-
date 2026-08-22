@@ -4,13 +4,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/app/context/AuthContext';
-import { upgradeRequests } from '@/lib/superadmin-api';
+import { upgradeRequests, support } from '@/lib/superadmin-api';
 import { onRealtimeEvent } from '@/lib/realtime';
 
 const NAV_ITEMS = [
   { href: '/platform',              label: 'Overview' },
   { href: '/platform/tenants',      label: 'Tenants' },
   { href: '/platform/subscriptions',label: 'Subscriptions' },
+  { href: '/platform/support',      label: 'Support' },
   { href: '/platform/ops',          label: 'Platform Ops' },
   { href: '/platform/settings',     label: 'Settings' },
 ];
@@ -35,9 +36,30 @@ function usePendingUpgradeRequestCount(): number {
   return count;
 }
 
+/** Live sum of unread tenant support messages across every thread, shown on
+ *  the "Support" nav item — same seed-then-realtime shape as the pending
+ *  upgrade-request badge above. Any `support:message_created` push (from
+ *  either direction — see support-router.ts) is a cheap enough signal to
+ *  just re-fetch the whole thread list on. */
+function usePendingSupportUnreadCount(): number {
+  const [count, setCount] = useState(0);
+
+  const refresh = useCallback(() => {
+    support.listThreads()
+      .then((res) => setCount(res.threads.reduce((sum, t) => sum + t.unread_count, 0)))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => onRealtimeEvent('support:message_created', refresh), [refresh]);
+
+  return count;
+}
+
 function PlatformNav() {
   const pathname = usePathname();
   const pendingRequestCount = usePendingUpgradeRequestCount();
+  const supportUnreadCount = usePendingSupportUnreadCount();
 
   return (
     <nav className="max-w-[1400px] mx-auto px-4 sm:px-8 h-11 flex items-center gap-1 overflow-x-auto">
@@ -61,6 +83,11 @@ function PlatformNav() {
             {item.href === '/platform/subscriptions' && pendingRequestCount > 0 && (
               <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold">
                 {pendingRequestCount}
+              </span>
+            )}
+            {item.href === '/platform/support' && supportUnreadCount > 0 && (
+              <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#0052ff] text-white text-[9px] font-bold">
+                {supportUnreadCount}
               </span>
             )}
           </Link>
